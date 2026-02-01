@@ -18,6 +18,7 @@ import tempfile
 import unittest
 
 import torch
+from parameterized import parameterized
 
 from transformers.models.colmodernvbert.processing_colmodernvbert import ColModernVBertProcessor
 from transformers.testing_utils import get_tests_dir, require_torch, require_vision
@@ -323,8 +324,9 @@ class ColModernVBertProcessorTest(ProcessorTesterMixin, unittest.TestCase):
     def test_apply_chat_template_video(self):
         pass
 
+    @parameterized.expand([(1, "pt"), (2, "pt")])
     @unittest.skip("ColModernVBert does not have a chat template")
-    def test_apply_chat_template_image(self):
+    def test_apply_chat_template_image(self, batch_size, return_tensors):
         pass
 
     @unittest.skip("ColModernVBert does not have a chat template")

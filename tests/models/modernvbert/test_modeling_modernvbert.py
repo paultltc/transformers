@@ -49,9 +49,8 @@ if is_torch_available():
     import torch
 
     from transformers import (
+        ModernBertConfig,
         ModernVBertForMaskedLM,
-        ModernVBertForMultipleChoice,
-        ModernVBertForQuestionAnswering,
         ModernVBertForSequenceClassification,
         ModernVBertForTokenClassification,
         ModernVBertModel,
@@ -101,13 +100,12 @@ class ModernVBertModelTester:
         image_token_id: int = 98,
         pixel_shuffle_factor=2,
         num_labels=3,
-        num_choices=4,
         use_labels=True,
         type_sequence_label_size=2,
     ):
         self.parent = parent
         self.batch_size = batch_size
-        self.text_config = text_config
+        self.text_config = ModernBertConfig(**text_config)
         self.vision_config = vision_config
         self.num_images = num_images
         self.image_token_id = image_token_id
@@ -124,7 +122,6 @@ class ModernVBertModelTester:
         self.num_attention_heads = text_config["num_attention_heads"]
         self.is_training = is_training
         self.num_labels = num_labels
-        self.num_choices = num_choices
         self.use_labels = use_labels
         self.type_sequence_label_size = type_sequence_label_size
 
@@ -149,11 +146,9 @@ class ModernVBertModelTester:
 
         sequence_labels = None
         token_labels = None
-        choice_labels = None
         if self.use_labels:
             sequence_labels = ids_tensor([self.batch_size], self.type_sequence_label_size)
             token_labels = ids_tensor([self.batch_size, self.seq_length], self.num_labels)
-            choice_labels = ids_tensor([self.batch_size], self.num_choices)
 
         config = self.get_config()
 
@@ -163,13 +158,11 @@ class ModernVBertModelTester:
         config.eos_token_id = config.text_config.eos_token_id
         config.tie_word_embeddings = config.text_config.tie_word_embeddings
 
-        return config, input_ids, attention_mask, pixel_values, sequence_labels, token_labels, choice_labels
+        return config, input_ids, attention_mask, pixel_values, sequence_labels, token_labels
 
     def prepare_config_and_inputs_for_common(self):
         config_and_inputs = self.prepare_config_and_inputs()
-        config, input_ids, attention_mask, pixel_values, sequence_labels, token_labels, choice_labels = (
-            config_and_inputs
-        )
+        config, input_ids, attention_mask, pixel_values, sequence_labels, token_labels = config_and_inputs
 
         inputs_dict = {
             "pixel_values": pixel_values,
@@ -178,9 +171,7 @@ class ModernVBertModelTester:
         }
         return config, inputs_dict
 
-    def create_and_check_model(
-        self, config, input_ids, input_mask, pixel_values, sequence_labels, token_labels, choice_labels
-    ):
+    def create_and_check_model(self, config, input_ids, input_mask, pixel_values, sequence_labels, token_labels):
         model = ModernVBertModel(config=config)
         model.to(torch_device)
         model.eval()
@@ -195,7 +186,7 @@ class ModernVBertModelTester:
         self.parent.assertEqual(result.last_hidden_state.shape, (self.batch_size, self.seq_length, self.hidden_size))
 
     def create_and_check_for_masked_lm(
-        self, config, input_ids, input_mask, pixel_values, sequence_labels, token_labels, choice_labels
+        self, config, input_ids, input_mask, pixel_values, sequence_labels, token_labels
     ):
         model = ModernVBertForMaskedLM(config=config)
         model.to(torch_device)
@@ -211,7 +202,7 @@ class ModernVBertModelTester:
         self.parent.assertEqual(result.logits.shape, (self.batch_size, self.seq_length, self.vocab_size))
 
     def create_and_check_for_sequence_classification(
-        self, config, input_ids, input_mask, pixel_values, sequence_labels, token_labels, choice_labels
+        self, config, input_ids, input_mask, pixel_values, sequence_labels, token_labels
     ):
         config.num_labels = self.num_labels
         model = ModernVBertForSequenceClassification(config)
@@ -228,7 +219,7 @@ class ModernVBertModelTester:
         self.parent.assertEqual(result.logits.shape, (self.batch_size, self.num_labels))
 
     def create_and_check_for_token_classification(
-        self, config, input_ids, input_mask, pixel_values, sequence_labels, token_labels, choice_labels
+        self, config, input_ids, input_mask, pixel_values, sequence_labels, token_labels
     ):
         config.num_labels = self.num_labels
         model = ModernVBertForTokenClassification(config=config)
@@ -244,28 +235,6 @@ class ModernVBertModelTester:
         result = model(**inputs_dict)
         self.parent.assertEqual(result.logits.shape, (self.batch_size, self.seq_length, self.num_labels))
 
-    def create_and_check_for_multiple_choice(
-        self, config, input_ids, input_mask, pixel_values, sequence_labels, token_labels, choice_labels
-    ):
-        config.num_labels = self.num_labels
-        model = ModernVBertForMultipleChoice(config=config)
-        model.to(torch_device)
-        model.eval()
-        multiple_choice_inputs_ids = input_ids.unsqueeze(1).expand(-1, self.num_choices, -1).contiguous()
-        multiple_choice_pixel_values = (
-            pixel_values.unsqueeze(1).expand(-1, self.num_choices, -1, -1, -1, -1).contiguous()
-        )
-        multiple_choice_input_mask = input_mask.unsqueeze(1).expand(-1, self.num_choices, -1).contiguous()
-
-        inputs_dict = {
-            "pixel_values": multiple_choice_pixel_values,
-            "input_ids": multiple_choice_inputs_ids,
-            "attention_mask": multiple_choice_input_mask,
-            "labels": choice_labels,
-        }
-        result = model(**inputs_dict)
-        self.parent.assertEqual(result.logits.shape, (self.batch_size, self.num_choices))
-
 
 @require_torch
 class ModernVBertModelTest(ModelTesterMixin, unittest.TestCase):
@@ -279,8 +248,6 @@ class ModernVBertModelTest(ModelTesterMixin, unittest.TestCase):
             ModernVBertForMaskedLM,
             ModernVBertForSequenceClassification,
             ModernVBertForTokenClassification,
-            ModernVBertForQuestionAnswering,
-            ModernVBertForMultipleChoice,
         )
         if is_torch_available()
         else ()
@@ -293,7 +260,6 @@ class ModernVBertModelTest(ModelTesterMixin, unittest.TestCase):
             "image-classification": ModernVBertForSequenceClassification,
             "token-classification": ModernVBertForTokenClassification,
             "zero-shot": ModernVBertForSequenceClassification,
-            "question-answering": ModernVBertForQuestionAnswering,
         }
         if is_torch_available()
         else {}
@@ -332,26 +298,6 @@ class ModernVBertModelTest(ModelTesterMixin, unittest.TestCase):
     def test_for_token_classification(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_for_token_classification(*config_and_inputs)
-
-    def test_for_multiple_choice(self):
-        config_and_inputs = self.model_tester.prepare_config_and_inputs()
-        self.model_tester.create_and_check_for_multiple_choice(*config_and_inputs)
-
-    def _prepare_for_class(self, inputs_dict, model_class, return_labels=False):
-        inputs_dict = copy.deepcopy(inputs_dict)
-        if model_class.__name__ == "ModernVBertForMultipleChoice":
-            inputs_dict = {
-                k: v.unsqueeze(1).expand(-1, self.model_tester.num_choices, *v.shape[1:]).contiguous()
-                if isinstance(v, torch.Tensor) and v.ndim > 1
-                else v
-                for k, v in inputs_dict.items()
-            }
-
-            if return_labels:
-                inputs_dict["labels"] = torch.ones(self.model_tester.batch_size, dtype=torch.long, device=torch_device)
-        else:
-            inputs_dict = super()._prepare_for_class(inputs_dict, model_class, return_labels)
-        return inputs_dict
 
     def test_sdpa_can_dispatch_composite_models(self):
         """

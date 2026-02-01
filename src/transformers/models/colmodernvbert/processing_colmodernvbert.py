@@ -4,55 +4,40 @@
 #             the file from the modular. If any change should be done, please apply the change to the
 #                          modular_colmodernvbert.py file directly. One of our CI enforces this.
 #                🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨
-# MIT License
+# Copyright 2026 Illuin Technology and contributors, and The HuggingFace Inc. team. All rights reserved.
 #
-# Copyright 2026 Illuin Technology, and contributors, and The HuggingFace Inc. team.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import re
 from itertools import accumulate
 from typing import Optional, Union
 
 import numpy as np
+import torch
 
 from ...feature_extraction_utils import BatchFeature
 from ...image_utils import ImageInput, is_valid_image, load_image
 from ...processing_utils import MultiModalData, ProcessingKwargs, ProcessorMixin, Unpack
 from ...tokenization_utils_base import AddedToken, BatchEncoding, PreTokenizedInput, TextInput
-from ...utils import auto_docstring, is_torch_available
-
-
-if is_torch_available():
-    import torch
+from ...utils import auto_docstring
 
 
 class ColModernVBertProcessorKwargs(ProcessingKwargs, total=False):
     _defaults = {
         "text_kwargs": {
             "padding": "longest",
-            "add_special_tokens": True,
-            "is_split_into_words": False,
-            "return_mm_token_type_ids": False,
         },
         "images_kwargs": {
-            "return_row_col_info": True,
             "data_format": "channels_first",
             "do_convert_rgb": True,
         },
@@ -123,7 +108,7 @@ class ColModernVBertProcessor(ProcessorMixin):
 
     Args:
             image_processor ([`ModernVBertImageProcessor`]): An instance of [`ModernVBertImageProcessor`]. The image processor is a required input.
-            tokenizer (`PreTrainedTokenizerBase`, *optional*): An instance of [`PreTrainedTokenizerBase`]. This should correspond with the model's text model. The tokenizer is a required input.
+            tokenizer (`PreTrainedTokenizerFast`, *optional*): An instance of [`PreTrainedTokenizerFast`]. This should correspond with the model's text model. The tokenizer is a required input.
             image_seq_len (`int`, *optional*, defaults to 64): The length of the image sequence i.e. the number of <image> tokens per image in the input.
             visual_prompt_prefix (`Optional`, *optional*): A prefix to be prepended to visual prompts.
             query_prefix (`Optional`, *optional*): A prefix to be prepended to query prompts.
@@ -147,18 +132,9 @@ class ColModernVBertProcessor(ProcessorMixin):
         query_prefix (`str`, *optional*):
             A prefix to be used for the query.
         """
-        super().__init__(image_processor, tokenizer, chat_template=chat_template)
-        self.image_token = AddedToken("<image>", normalized=False, special=True).content
-        self.video_token = None  #    ColModernVBert does not process video inputs
-
-        self.visual_prompt_prefix = visual_prompt_prefix or (
-            f"<|begin_of_text|>User:{self.image_token}Describe the image.<end_of_utterance>\nAssistant:"
-        )
-
-        self.query_prefix = query_prefix or ""
-
-        self.chat_template = None  # ColModernVBert does not use chat templates
+        chat_template = None  # ColModernVBert does not use chat templates
         self.fake_image_token = AddedToken("<fake_token_around_image>", normalized=False, special=True).content
+        self.image_token = AddedToken("<image>", normalized=False, special=True).content
         self.end_of_utterance_token = AddedToken("<end_of_utterance>", normalized=False, special=True).content
         self.global_image_tag = "<global-img>"  # https://github.com/huggingface/transformers/pull/32473/files/8063e5e17362571b693f1db95167f5443a3be1b2#r1734825341
         self.image_seq_len = image_seq_len
@@ -181,268 +157,15 @@ class ColModernVBertProcessor(ProcessorMixin):
             ]
         }
         tokenizer.add_special_tokens(tokens_to_add)
+        self.image_token_id = tokenizer.convert_tokens_to_ids(self.image_token)
 
-    @auto_docstring
-    def __call__(
-        self,
-        images: ImageInput | None = None,
-        text: TextInput | PreTokenizedInput | list[TextInput] | list[PreTokenizedInput] = None,
-        **kwargs: Unpack[ColModernVBertProcessorKwargs],
-    ) -> BatchFeature:
-        r"""
-        images (`PIL.Image.Image`, `np.ndarray`, `torch.Tensor`, `list[PIL.Image.Image]`, `list[np.ndarray]`, `list[torch.Tensor]`):
-            The image or batch of images to be prepared. Each image can be a PIL image, NumPy array or PyTorch
-            tensor. In case of a NumPy array/PyTorch tensor, each image should be of shape (C, H, W), where C is a
-            number of channels, H and W are image height and width.
-        text (`str`, `list[str]`, `list[list[str]]`):
-            The sequence or batch of sequences to be encoded. Each sequence can be a string or a list of strings
-            (pretokenized string). If the sequences are provided as list of strings (pretokenized), you must set
-            `is_split_into_words=True` (to lift the ambiguity with a batch of sequences).
+        super().__init__(image_processor, tokenizer, chat_template=chat_template, **kwargs)
 
-        Returns:
-            [`BatchFeature`]: A [`BatchFeature`] with the following fields:
-
-            - **input_ids** -- List of token ids to be fed to a model.
-            - **attention_mask** -- List of indices specifying which tokens should be attended to by the model (when
-              `return_attention_mask=True` or if *"attention_mask"* is in `self.vlm_input_names` and if `text` is not
-              `None`).
-            - **pixel_values** -- Pixel values to be fed to a model. Returned when `images` is not `None`.
-        """
-        output_kwargs = self._merge_kwargs(
-            ColModernVBertProcessorKwargs,
-            tokenizer_init_kwargs=self.tokenizer.init_kwargs,
-            **kwargs,
+        self.visual_prompt_prefix = visual_prompt_prefix or (
+            f"<|begin_of_text|>User:{self.image_token}Describe the image.<end_of_utterance>\nAssistant:"
         )
-        suffix = output_kwargs["text_kwargs"].pop("suffix", None)
-
-        return_token_type_ids = suffix is not None
-
-        if text is None and images is None:
-            raise ValueError("Either text or images must be provided")
-        if text is not None and images is not None:
-            raise ValueError("Only one of text or images can be processed at a time")
-
-        if images is not None:
-            if is_valid_image(images):
-                images = [images]
-            elif isinstance(images, list) and is_valid_image(images[0]):
-                pass
-            elif not (isinstance(images, list) and isinstance(images[0], list) and is_valid_image(images[0][0])):
-                raise ValueError("images must be an image, list of images or list of list of images")
-
-            images = [image.convert("RGB") for image in images]
-
-            batch_doc = self._process_elements(
-                text=[self.visual_prompt_prefix] * len(images),
-                images=images,
-                images_kwargs=output_kwargs["images_kwargs"],
-                text_kwargs=output_kwargs["text_kwargs"],
-            )
-
-            if return_token_type_ids:
-                labels = batch_doc["input_ids"].masked_fill(batch_doc["token_type_ids"] == 0, -100)
-                batch_doc.update({"labels": labels})
-
-            return batch_doc
-
-        elif text is not None:
-            if isinstance(text, str):
-                text = [text]
-            elif not (isinstance(text, list) and isinstance(text[0], str)):
-                raise ValueError("Text must be a string or a list of strings")
-
-            if suffix is None:
-                suffix = self.query_augmentation_token * 10
-
-            texts_query: list[str] = []
-
-            for query in text:
-                augmented_query = self.query_prefix + query + suffix
-                texts_query.append(augmented_query)
-
-            batch_query = self._process_elements(
-                text=texts_query,
-                return_token_type_ids=False,
-                text_kwargs=output_kwargs["text_kwargs"],
-            )
-
-            return batch_query
-
-    def _get_num_multimodal_tokens(self, image_sizes=None, **kwargs):
-        """
-        Computes the number of placeholder tokens needed for multimodal inputs with the given sizes.
-        Args:
-            image_sizes (`list[list[int]]`, *optional*):
-                The input sizes formatted as (height, width) per each image.
-        Returns:
-            `MultiModalData`: A `MultiModalData` object holding number of tokens per each of the provided
-            input modalities, along with other useful data.
-        """
-
-        vision_data = {}
-        if image_sizes is not None:
-            images_kwargs = ColModernVBertProcessorKwargs._defaults.get("images_kwargs", {})
-            images_kwargs.update(kwargs)
-            merge_size = images_kwargs.get("merge_size", None) or self.image_processor.merge_size
-
-            num_image_patches = [
-                self.image_processor.get_number_of_image_patches(*image_size, images_kwargs)
-                for image_size in image_sizes
-            ]
-            num_image_tokens = [(num_patches // merge_size**2) for num_patches in num_image_patches]
-            vision_data.update({"num_image_tokens": num_image_tokens, "num_image_patches": num_image_patches})
-
-        return MultiModalData(**vision_data)
-
-    @property
-    def model_input_names(self):
-        tokenizer_input_names = self.tokenizer.model_input_names
-        image_processor_input_names = self.image_processor.model_input_names
-
-        # ColQwen doesn't process videos. Make a copy of list when removing
-        # otherwise `self.feature_extractor.model_input_names` is also modified
-        image_processor_input_names = [
-            name for name in image_processor_input_names if name not in ["pixel_values_videos", "video_grid_thw"]
-        ]
-        return tokenizer_input_names + image_processor_input_names
-
-    @property
-    def query_augmentation_token(self) -> str:
-        """
-        Return the query augmentation token.
-
-        Query augmentation buffers are used as reasoning buffers during inference.
-        """
-        return self.end_of_utterance_token
-
-    def process_images(
-        self,
-        images: ImageInput | None = None,
-        **kwargs: Unpack[ColModernVBertProcessorKwargs],
-    ) -> BatchFeature:
-        """
-        Prepare for the model one or several image(s). This method is a wrapper around the `__call__` method of the ColModernVBertProcessor's
-        [`ColModernVBertProcessor.__call__`].
-
-        This method forwards the `images` and `kwargs` arguments to the image processor.
-
-        Args:
-            images (`PIL.Image.Image`, `np.ndarray`, `torch.Tensor`, `list[PIL.Image.Image]`, `list[np.ndarray]`, `list[torch.Tensor]`):
-                The image or batch of images to be prepared. Each image can be a PIL image, NumPy array or PyTorch
-                tensor. In case of a NumPy array/PyTorch tensor, each image should be of shape (C, H, W), where C is a
-                number of channels, H and W are image height and width.
-            return_tensors (`str` or [`~utils.TensorType`], *optional*):
-                If set, will return tensors of a particular framework. Acceptable values are:
-
-                - `'pt'`: Return PyTorch `torch.Tensor` objects.
-                - `'np'`: Return NumPy `np.ndarray` objects.
-
-        Returns:
-            [`BatchFeature`]: A [`BatchFeature`] with the following fields:
-
-            - **input_ids** -- List of token ids to be fed to a model.
-            - **attention_mask** -- List of indices specifying which tokens should be attended to by the model (when
-              `return_attention_mask=True` or if *"attention_mask"* is in `self.model_input_names` and if `text` is not
-              `None`).
-            - **pixel_values** -- Pixel values to be fed to a model. Returned when `images` is not `None`.
-        """
-        return self.__call__(images=images, **kwargs)
-
-    def process_queries(
-        self,
-        text: TextInput | list[TextInput],
-        **kwargs: Unpack[ColModernVBertProcessorKwargs],
-    ) -> BatchFeature:
-        """
-        Prepare for the model one or several texts. This method is a wrapper around the `__call__` method of the ColModernVBertProcessor's
-        [`ColModernVBertProcessor.__call__`].
-
-        This method forwards the `text` and `kwargs` arguments to the tokenizer.
-
-        Args:
-            text (`str`, `list[str]`, `list[list[str]]`):
-                The sequence or batch of sequences to be encoded. Each sequence can be a string or a list of strings
-                (pretokenized string). If the sequences are provided as list of strings (pretokenized), you must set
-                `is_split_into_words=True` (to lift the ambiguity with a batch of sequences).
-            return_tensors (`str` or [`~utils.TensorType`], *optional*):
-                If set, will return tensors of a particular framework. Acceptable values are:
-
-                - `'pt'`: Return PyTorch `torch.Tensor` objects.
-                - `'np'`: Return NumPy `np.ndarray` objects.
-
-        Returns:
-            [`BatchFeature`]: A [`BatchFeature`] with the following fields:
-
-            - **input_ids** -- List of token ids to be fed to a model.
-            - **attention_mask** -- List of indices specifying which tokens should be attended to by the model (when
-              `return_attention_mask=True` or if *"attention_mask"* is in `self.model_input_names` and if `text` is not
-              `None`).
-        """
-        return self.__call__(text=text, **kwargs)
-
-    def score_retrieval(
-        self,
-        query_embeddings: Union["torch.Tensor", list["torch.Tensor"]],
-        passage_embeddings: Union["torch.Tensor", list["torch.Tensor"]],
-        batch_size: int = 128,
-        output_dtype: Optional["torch.dtype"] = None,
-        output_device: Union["torch.device", str] = "cpu",
-    ) -> "torch.Tensor":
-        """
-        Compute the late-interaction/MaxSim score (ColBERT-like) for the given multi-vector
-        query embeddings (`qs`) and passage embeddings (`ps`). For ColModernVBert, a passage is the
-        image of a document page.
-
-        Because the embedding tensors are multi-vector and can thus have different shapes, they
-        should be fed as:
-        (1) a list of tensors, where the i-th tensor is of shape (sequence_length_i, embedding_dim)
-        (2) a single tensor of shape (n_passages, max_sequence_length, embedding_dim) -> usually
-            obtained by padding the list of tensors.
-
-        Args:
-            query_embeddings (`Union[torch.Tensor, list[torch.Tensor]`): Query embeddings.
-            passage_embeddings (`Union[torch.Tensor, list[torch.Tensor]`): Passage embeddings.
-            batch_size (`int`, *optional*, defaults to 128): Batch size for computing scores.
-            output_dtype (`torch.dtype`, *optional*, defaults to `torch.float32`): The dtype of the output tensor.
-                If `None`, the dtype of the input embeddings is used.
-            output_device (`torch.device` or `str`, *optional*, defaults to "cpu"): The device of the output tensor.
-
-        Returns:
-            `torch.Tensor`: A tensor of shape `(n_queries, n_passages)` containing the scores. The score
-            tensor is saved on the "cpu" device.
-        """
-
-        if len(query_embeddings) == 0:
-            raise ValueError("No queries provided")
-        if len(passage_embeddings) == 0:
-            raise ValueError("No passages provided")
-
-        if query_embeddings[0].device != passage_embeddings[0].device:
-            raise ValueError("Queries and passages must be on the same device")
-
-        if query_embeddings[0].dtype != passage_embeddings[0].dtype:
-            raise ValueError("Queries and passages must have the same dtype")
-
-        if output_dtype is None:
-            output_dtype = query_embeddings[0].dtype
-
-        scores: list[torch.Tensor] = []
-
-        for i in range(0, len(query_embeddings), batch_size):
-            batch_scores: list[torch.Tensor] = []
-            batch_queries = torch.nn.utils.rnn.pad_sequence(
-                query_embeddings[i : i + batch_size], batch_first=True, padding_value=0
-            )
-            for j in range(0, len(passage_embeddings), batch_size):
-                batch_passages = torch.nn.utils.rnn.pad_sequence(
-                    passage_embeddings[j : j + batch_size], batch_first=True, padding_value=0
-                )
-                batch_scores.append(
-                    torch.einsum("bnd,csd->bcns", batch_queries, batch_passages).max(dim=3)[0].sum(dim=2)
-                )
-            scores.append(torch.cat(batch_scores, dim=1).to(output_dtype).to(output_device))
-
-        return torch.cat(scores, dim=0)
+        self.query_prefix = query_prefix or ""
+        self.query_augmentation_token = self.end_of_utterance_token
 
     def _extract_images_from_prompts(self, prompts):
         prompt_images = []
@@ -456,14 +179,19 @@ class ColModernVBertProcessor(ProcessorMixin):
             prompt_images.append(images)
         return prompt_images
 
-    def _process_elements(
+    @auto_docstring
+    def __call__(
         self,
-        images: ImageInput | list[ImageInput] | list[list[ImageInput]] | None = None,
-        text: Union[TextInput, "PreTokenizedInput", list[TextInput], list["PreTokenizedInput"]] | None = None,
+        images: ImageInput | list[ImageInput] | list[list[ImageInput]] = None,
+        text: Union[TextInput, "PreTokenizedInput", list[TextInput], list["PreTokenizedInput"]] = None,
         image_seq_len: int | None = None,
         **kwargs: Unpack[ColModernVBertProcessorKwargs],
     ) -> BatchEncoding:
-        """Processes the input prompts and returns a BatchEncoding."""
+        r"""
+        image_seq_len (`int`, *optional*):
+            The length of the image sequence. If not provided, the default value of self.image_seq_len is used.
+            image_seq_len should be equal to int(((image_size // patch_size) ** 2) / (scale_factor**2))
+        """
         if text is None and images is None:
             raise ValueError("You must provide either `text` or `images`.")
 
@@ -595,6 +323,226 @@ class ColModernVBertProcessor(ProcessorMixin):
             inputs["mm_token_type_ids"] = mm_token_type_ids.tolist()
 
         return BatchFeature(data=inputs, tensor_type=return_tensors)
+
+    def _get_num_multimodal_tokens(self, image_sizes=None, **kwargs):
+        """
+        Computes the number of placeholder tokens needed for multimodal inputs with the given sizes.
+
+        Args:
+            image_sizes (`list[list[int]]`, *optional*):
+                The input sizes formatted as (height, width) per each image.
+
+        Returns:
+            `MultiModalData`: A `MultiModalData` object holding number of tokens per each of the provided
+            input modalities, along with other useful data.
+        """
+
+        vision_data = {}
+        if image_sizes is not None:
+            images_kwargs = ColModernVBertProcessorKwargs._defaults.get("images_kwargs", {})
+            images_kwargs.update(kwargs)
+
+            num_image_row_cols = [
+                self.image_processor.get_number_of_image_patches(*image_size, images_kwargs)
+                for image_size in image_sizes
+            ]
+
+            base_image_length = self.image_seq_len + 3
+            col_length = self.image_seq_len + 2
+            num_image_tokens = []
+            num_image_patches = []
+
+            for num_patches, num_rows, num_cols in num_image_row_cols:
+                row_length = col_length * num_cols + 1
+                num_image_tokens.append(base_image_length + (row_length * num_rows))
+                num_image_patches.append(num_patches)
+
+            vision_data.update({"num_image_tokens": num_image_tokens, "num_image_patches": num_image_patches})
+
+        return MultiModalData(**vision_data)
+
+    def process_images(
+        self,
+        images: ImageInput | None = None,
+        **kwargs: Unpack[ColModernVBertProcessorKwargs],
+    ) -> BatchFeature:
+        """
+        Prepare for the model one or several image(s). This method is a wrapper around the `__call__` method of the ColQwen2Processor's
+        [`ColQwen2Processor.__call__`].
+
+        This method forwards the `images` and `kwargs` arguments to the image processor.
+
+        Args:
+            images (`PIL.Image.Image`, `np.ndarray`, `torch.Tensor`, `list[PIL.Image.Image]`, `list[np.ndarray]`, `list[torch.Tensor]`):
+                The image or batch of images to be prepared. Each image can be a PIL image, NumPy array or PyTorch
+                tensor. In case of a NumPy array/PyTorch tensor, each image should be of shape (C, H, W), where C is a
+                number of channels, H and W are image height and width.
+            return_tensors (`str` or [`~utils.TensorType`], *optional*):
+                If set, will return tensors of a particular framework. Acceptable values are:
+
+                - `'pt'`: Return PyTorch `torch.Tensor` objects.
+                - `'np'`: Return NumPy `np.ndarray` objects.
+
+        Returns:
+            [`BatchFeature`]: A [`BatchFeature`] with the following fields:
+
+            - **input_ids** -- List of token ids to be fed to a model.
+            - **attention_mask** -- List of indices specifying which tokens should be attended to by the model (when
+              `return_attention_mask=True` or if *"attention_mask"* is in `self.model_input_names` and if `text` is not
+              `None`).
+            - **pixel_values** -- Pixel values to be fed to a model. Returned when `images` is not `None`.
+        """
+        output_kwargs = self._merge_kwargs(
+            ColModernVBertProcessorKwargs,
+            tokenizer_init_kwargs=self.tokenizer.init_kwargs,
+            **kwargs,
+        )
+        suffix = output_kwargs["text_kwargs"].pop("suffix", None)
+
+        return_token_type_ids = suffix is not None
+
+        if is_valid_image(images):
+            images = [images]
+        elif isinstance(images, list) and is_valid_image(images[0]):
+            pass
+        elif not (isinstance(images, list) and isinstance(images[0], list) and is_valid_image(images[0][0])):
+            raise ValueError("images must be an image, list of images or list of list of images")
+
+        images = [image.convert("RGB") for image in images]
+
+        batch_doc = self.__call__(
+            text=[self.visual_prompt_prefix] * len(images),
+            images=images,
+            common_kwargs=output_kwargs.get("common_kwargs", {}),
+            images_kwargs=output_kwargs["images_kwargs"],
+            text_kwargs=output_kwargs["text_kwargs"],
+        )
+
+        if return_token_type_ids:
+            labels = batch_doc["input_ids"].masked_fill(batch_doc["token_type_ids"] == 0, -100)
+            batch_doc.update({"labels": labels})
+
+        return batch_doc
+
+    def process_queries(
+        self,
+        text: TextInput | list[TextInput],
+        **kwargs: Unpack[ColModernVBertProcessorKwargs],
+    ) -> BatchFeature:
+        """
+        Prepare for the model one or several texts. This method is a wrapper around the `__call__` method of the ColQwen2Processor's
+        [`ColQwen2Processor.__call__`].
+
+        This method forwards the `text` and `kwargs` arguments to the tokenizer.
+
+        Args:
+            text (`str`, `list[str]`, `list[list[str]]`):
+                The sequence or batch of sequences to be encoded. Each sequence can be a string or a list of strings
+                (pretokenized string). If the sequences are provided as list of strings (pretokenized), you must set
+                `is_split_into_words=True` (to lift the ambiguity with a batch of sequences).
+            return_tensors (`str` or [`~utils.TensorType`], *optional*):
+                If set, will return tensors of a particular framework. Acceptable values are:
+
+                - `'pt'`: Return PyTorch `torch.Tensor` objects.
+                - `'np'`: Return NumPy `np.ndarray` objects.
+
+        Returns:
+            [`BatchFeature`]: A [`BatchFeature`] with the following fields:
+
+            - **input_ids** -- List of token ids to be fed to a model.
+            - **attention_mask** -- List of indices specifying which tokens should be attended to by the model (when
+              `return_attention_mask=True` or if *"attention_mask"* is in `self.model_input_names` and if `text` is not
+              `None`).
+        """
+        output_kwargs = self._merge_kwargs(
+            ColModernVBertProcessorKwargs,
+            tokenizer_init_kwargs=self.tokenizer.init_kwargs,
+            **kwargs,
+        )
+        suffix = output_kwargs["text_kwargs"].pop("suffix", None)
+
+        if isinstance(text, str):
+            text = [text]
+        elif not (isinstance(text, list) and isinstance(text[0], str)):
+            raise ValueError("Text must be a string or a list of strings")
+
+        if suffix is None:
+            suffix = self.query_augmentation_token * 10
+
+        texts_query: list[str] = [self.query_prefix + query + suffix for query in text]
+
+        batch_query = self.__call__(
+            text=texts_query,
+            return_token_type_ids=False,
+            common_kwargs=output_kwargs.get("common_kwargs", {}),
+            text_kwargs=output_kwargs["text_kwargs"],
+        )
+
+        return batch_query
+
+    def score_retrieval(
+        self,
+        query_embeddings: Union["torch.Tensor", list["torch.Tensor"]],
+        passage_embeddings: Union["torch.Tensor", list["torch.Tensor"]],
+        batch_size: int = 128,
+        output_dtype: Optional["torch.dtype"] = None,
+        output_device: Union["torch.device", str] = "cpu",
+    ) -> "torch.Tensor":
+        """
+        Compute the late-interaction/MaxSim score (ColBERT-like) for the given multi-vector
+        query embeddings (`qs`) and passage embeddings (`ps`). For ColQwen2, a passage is the
+        image of a document page.
+
+        Because the embedding tensors are multi-vector and can thus have different shapes, they
+        should be fed as:
+        (1) a list of tensors, where the i-th tensor is of shape (sequence_length_i, embedding_dim)
+        (2) a single tensor of shape (n_passages, max_sequence_length, embedding_dim) -> usually
+            obtained by padding the list of tensors.
+
+        Args:
+            query_embeddings (`Union[torch.Tensor, list[torch.Tensor]`): Query embeddings.
+            passage_embeddings (`Union[torch.Tensor, list[torch.Tensor]`): Passage embeddings.
+            batch_size (`int`, *optional*, defaults to 128): Batch size for computing scores.
+            output_dtype (`torch.dtype`, *optional*, defaults to `torch.float32`): The dtype of the output tensor.
+                If `None`, the dtype of the input embeddings is used.
+            output_device (`torch.device` or `str`, *optional*, defaults to "cpu"): The device of the output tensor.
+
+        Returns:
+            `torch.Tensor`: A tensor of shape `(n_queries, n_passages)` containing the scores. The score
+            tensor is saved on the "cpu" device.
+        """
+
+        if len(query_embeddings) == 0:
+            raise ValueError("No queries provided")
+        if len(passage_embeddings) == 0:
+            raise ValueError("No passages provided")
+
+        if query_embeddings[0].device != passage_embeddings[0].device:
+            raise ValueError("Queries and passages must be on the same device")
+
+        if query_embeddings[0].dtype != passage_embeddings[0].dtype:
+            raise ValueError("Queries and passages must have the same dtype")
+
+        if output_dtype is None:
+            output_dtype = query_embeddings[0].dtype
+
+        scores: list[torch.Tensor] = []
+
+        for i in range(0, len(query_embeddings), batch_size):
+            batch_scores: list[torch.Tensor] = []
+            batch_queries = torch.nn.utils.rnn.pad_sequence(
+                query_embeddings[i : i + batch_size], batch_first=True, padding_value=0
+            )
+            for j in range(0, len(passage_embeddings), batch_size):
+                batch_passages = torch.nn.utils.rnn.pad_sequence(
+                    passage_embeddings[j : j + batch_size], batch_first=True, padding_value=0
+                )
+                batch_scores.append(
+                    torch.einsum("bnd,csd->bcns", batch_queries, batch_passages).max(dim=3)[0].sum(dim=2)
+                )
+            scores.append(torch.cat(batch_scores, dim=1).to(output_dtype).to(output_device))
+
+        return torch.cat(scores, dim=0)
 
 
 __all__ = ["ColModernVBertProcessor"]

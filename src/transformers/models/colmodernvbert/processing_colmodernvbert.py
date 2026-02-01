@@ -397,6 +397,7 @@ class ColModernVBertProcessor(ProcessorMixin):
             tokenizer_init_kwargs=self.tokenizer.init_kwargs,
             **kwargs,
         )
+
         suffix = output_kwargs["text_kwargs"].pop("suffix", None)
 
         return_token_type_ids = suffix is not None
@@ -413,7 +414,6 @@ class ColModernVBertProcessor(ProcessorMixin):
         batch_doc = self.__call__(
             text=[self.visual_prompt_prefix] * len(images),
             images=images,
-            common_kwargs=output_kwargs.get("common_kwargs", {}),
             images_kwargs=output_kwargs["images_kwargs"],
             text_kwargs=output_kwargs["text_kwargs"],
         )
@@ -459,6 +459,7 @@ class ColModernVBertProcessor(ProcessorMixin):
             tokenizer_init_kwargs=self.tokenizer.init_kwargs,
             **kwargs,
         )
+
         suffix = output_kwargs["text_kwargs"].pop("suffix", None)
 
         if isinstance(text, str):
@@ -474,7 +475,6 @@ class ColModernVBertProcessor(ProcessorMixin):
         batch_query = self.__call__(
             text=texts_query,
             return_token_type_ids=False,
-            common_kwargs=output_kwargs.get("common_kwargs", {}),
             text_kwargs=output_kwargs["text_kwargs"],
         )
 

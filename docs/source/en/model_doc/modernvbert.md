@@ -77,20 +77,6 @@ print("Predicted token:", predicted_token)  # Predicted token: painting
 
 [[autodoc]] ModernVBertConfig
 
-## ModernVBertImageProcessor
-
-[[autodoc]] ModernVBertImageProcessor
-    - preprocess
-
-## ModernVBertImageProcessorFast
-
-[[autodoc]] ModernVBertImageProcessorFast
-    - preprocess
-
-## ModernVBertProcessor
-
-[[autodoc]] ModernVBertProcessor
-
 ## ModernVBertModel
 
 [[autodoc]] ModernVBertModel

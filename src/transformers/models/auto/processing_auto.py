@@ -114,7 +114,7 @@ PROCESSOR_MAPPING_NAMES = OrderedDict(
         ("mistral3", "PixtralProcessor"),
         ("mllama", "MllamaProcessor"),
         ("mm-grounding-dino", "GroundingDinoProcessor"),
-        ("modernvbert", "ModernVBertProcessor"),
+        ("modernvbert", "Idefics3Processor"),
         ("moonshine", "Wav2Vec2Processor"),
         ("omdet-turbo", "OmDetTurboProcessor"),
         ("oneformer", "OneFormerProcessor"),

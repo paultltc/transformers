@@ -112,7 +112,7 @@ class ColModernVBertProcessor(ProcessorMixin):
     for more information.
 
     Args:
-            image_processor ([`ModernVBertImageProcessor`]): An instance of [`ModernVBertImageProcessor`]. The image processor is a required input.
+            image_processor ([`Idefics3ImageProcessor`]): An instance of [`Idefics3ImageProcessor`]. The image processor is a required input.
             tokenizer (`PreTrainedTokenizerFast`, *optional*): An instance of [`PreTrainedTokenizerFast`]. This should correspond with the model's text model. The tokenizer is a required input.
             image_seq_len (`int`, *optional*, defaults to 64): The length of the image sequence i.e. the number of <image> tokens per image in the input.
             visual_prompt_prefix (`Optional`, *optional*): A prefix to be prepended to visual prompts.

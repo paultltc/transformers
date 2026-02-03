@@ -182,9 +182,6 @@ class MMGroundingDinoMultiscaleDeformableAttention(nn.Module):
 
         self.disable_custom_kernels = config.disable_custom_kernels
 
-    def with_pos_embed(self, tensor: torch.Tensor, position_embeddings: Tensor | None):
-        return tensor if position_embeddings is None else tensor + position_embeddings
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -200,7 +197,7 @@ class MMGroundingDinoMultiscaleDeformableAttention(nn.Module):
     ):
         # add position embeddings to the hidden states before projecting to queries and keys
         if position_embeddings is not None:
-            hidden_states = self.with_pos_embed(hidden_states, position_embeddings)
+            hidden_states = hidden_states + position_embeddings
 
         batch_size, num_queries, _ = hidden_states.shape
         batch_size, sequence_length, _ = encoder_hidden_states.shape
@@ -691,6 +688,7 @@ class MMGroundingDinoConvEncoder(nn.Module):
                     if "stage.1" not in name and "stage.2" not in name and "stage.3" not in name:
                         parameter.requires_grad_(False)
 
+    # TODO: use modular - Copied from transformers.models.detr.modeling_detr.DetrConvEncoder.forward with Detr->MMGroundingDino
     def forward(self, pixel_values: torch.Tensor, pixel_mask: torch.Tensor):
         # send pixel_values through the model to get list of feature maps
         features = self.model(pixel_values) if self.config.use_timm_backbone else self.model(pixel_values).feature_maps
@@ -703,6 +701,7 @@ class MMGroundingDinoConvEncoder(nn.Module):
         return out
 
 
+# TODO: use modular - Copied from transformers.models.detr.modeling_detr.DetrConvModel with Detr->MMGroundingDino
 class MMGroundingDinoConvModel(nn.Module):
     """
     This module adds 2D position embeddings to all intermediate feature maps of the convolutional encoder.
@@ -1979,10 +1978,12 @@ class MMGroundingDinoModel(MMGroundingDinoPreTrainedModel):
         ```python
         >>> from transformers import AutoProcessor, AutoModel
         >>> from PIL import Image
-        >>> import requests
+        >>> import httpx
+        >>> from io import BytesIO
 
         >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-        >>> image = Image.open(requests.get(url, stream=True).raw)
+        >>> with httpx.stream("GET", url) as response:
+        ...     image = Image.open(BytesIO(response.read()))
         >>> text = "a cat."
 
         >>> processor = AutoProcessor.from_pretrained("IDEA-Research/grounding-dino-tiny")
@@ -2227,8 +2228,6 @@ class MMGroundingDinoMLPPredictionHead(nn.Module):
     Very simple multi-layer perceptron (MLP, also called FFN), used to predict the normalized center coordinates,
     height and width of a bounding box w.r.t. an image.
 
-    Copied from https://github.com/facebookresearch/detr/blob/master/models/detr.py
-
     """
 
     def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
@@ -2463,7 +2462,8 @@ class MMGroundingDinoForObjectDetection(MMGroundingDinoPreTrainedModel):
         Examples:
 
         ```python
-        >>> import requests
+        >>> import httpx
+        >>> from io import BytesIO
 
         >>> import torch
         >>> from PIL import Image
@@ -2475,8 +2475,9 @@ class MMGroundingDinoForObjectDetection(MMGroundingDinoPreTrainedModel):
         >>> processor = AutoProcessor.from_pretrained(model_id)
         >>> model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(device)
 
-        >>> image_url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-        >>> image = Image.open(requests.get(image_url, stream=True).raw)
+        >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
+        >>> with httpx.stream("GET", url) as response:
+        ...     image = Image.open(BytesIO(response.read()))
         >>> # Check for cats and remote controls
         >>> text_labels = [["a cat", "a remote control"]]
 

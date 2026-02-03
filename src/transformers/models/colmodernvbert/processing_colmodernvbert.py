@@ -20,7 +20,7 @@
 
 import re
 from itertools import accumulate
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 import numpy as np
 import torch
@@ -28,8 +28,12 @@ import torch
 from ...feature_extraction_utils import BatchFeature
 from ...image_utils import ImageInput, is_valid_image, load_image
 from ...processing_utils import MultiModalData, ProcessingKwargs, ProcessorMixin, Unpack
-from ...tokenization_utils_base import AddedToken, BatchEncoding, PreTokenizedInput, TextInput
+from ...tokenization_utils_base import AddedToken, BatchEncoding, TextInput
 from ...utils import auto_docstring
+
+
+if TYPE_CHECKING:
+    from ...tokenization_utils_base import PreTokenizedInput
 
 
 class ColModernVBertProcessorKwargs(ProcessingKwargs, total=False):

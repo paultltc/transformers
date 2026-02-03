@@ -31,12 +31,12 @@ from transformers import (
 )
 from transformers.configuration_utils import PreTrainedConfig
 from transformers.modeling_utils import PreTrainedModel
-from transformers.utils import CONFIG_NAME
 from transformers.testing_utils import (
     require_torch,
     slow,
     torch_device,
 )
+from transformers.utils import CONFIG_NAME
 from transformers.utils.import_utils import is_flash_attn_2_available, is_torch_bf16_available_on_device
 
 from ...test_configuration_common import ConfigTester

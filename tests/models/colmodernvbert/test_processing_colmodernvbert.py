@@ -266,9 +266,7 @@ class ColModernVBertProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         # When only images are provided, pixel_values must be present
         self.assertIn("pixel_values", inputs)
 
-    @unittest.skip(
-        reason="ColModernVBert is meant to be used through `process_queries` or `process_images`."
-    )
+    @unittest.skip(reason="ColModernVBert is meant to be used through `process_queries` or `process_images`.")
     def test_tokenizer_defaults(self):
         pass
 

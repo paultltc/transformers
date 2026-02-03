@@ -12,25 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import re
 from dataclasses import dataclass
-from itertools import accumulate
-from typing import Union, Optional
+from typing import Optional, Union
 
 import torch
-import numpy as np
 
 from ...feature_extraction_utils import BatchFeature
-from ...image_utils import ImageInput, is_valid_image, load_image
-from ...processing_utils import ProcessingKwargs, Unpack
-from ...tokenization_utils_base import AddedToken, BatchEncoding, PreTokenizedInput, TextInput
+from ...image_utils import ImageInput, is_valid_image
+from ...processing_utils import Unpack
+from ...tokenization_utils_base import TextInput
+from ...utils import ModelOutput, auto_docstring, logging
 from ...utils.generic import check_model_inputs
-from ...utils import ModelOutput, auto_docstring, is_torch_available, logging
 from ..auto.modeling_auto import AutoModel
 from ..colpali.modeling_colpali import ColPaliForRetrieval, ColPaliPreTrainedModel
 from ..colqwen2.configuration_colqwen2 import ColQwen2Config
-from ..colqwen2.processing_colqwen2 import ColQwen2Processor
 from ..idefics3.processing_idefics3 import Idefics3Processor, Idefics3ProcessorKwargs
+
 
 logger = logging.get_logger(__name__)
 
@@ -81,6 +78,7 @@ class ColModernVBertProcessorKwargs(Idefics3ProcessorKwargs, total=False):
         "common_kwargs": {"return_tensors": "pt"},
     }
 
+
 class ColModernVBertProcessor(Idefics3Processor):
     r"""
     Constructs a ColModernVBert processor which wraps a ModernVBertProcessor and special methods to process images and queries, as
@@ -115,7 +113,7 @@ class ColModernVBertProcessor(Idefics3Processor):
         query_prefix (`str`, *optional*):
             A prefix to be used for the query.
         """
-        chat_template = None # ColModernVBert does not use chat templates
+        chat_template = None  # ColModernVBert does not use chat templates
 
         super().__init__(
             image_processor,
@@ -167,7 +165,7 @@ class ColModernVBertProcessor(Idefics3Processor):
             tokenizer_init_kwargs=self.tokenizer.init_kwargs,
             **kwargs,
         )
-        
+
         suffix = output_kwargs["text_kwargs"].pop("suffix", None)
 
         return_token_type_ids = suffix is not None
@@ -240,9 +238,7 @@ class ColModernVBertProcessor(Idefics3Processor):
         if suffix is None:
             suffix = self.query_augmentation_token * 10
 
-        texts_query: list[str] = [
-            self.query_prefix + query + suffix for query in text
-        ]
+        texts_query: list[str] = [self.query_prefix + query + suffix for query in text]
 
         batch_query = self.__call__(
             text=texts_query,
@@ -251,7 +247,7 @@ class ColModernVBertProcessor(Idefics3Processor):
         )
 
         return batch_query
-        
+
     def score_retrieval(
         self,
         query_embeddings: Union["torch.Tensor", list["torch.Tensor"]],
@@ -320,6 +316,7 @@ class ColModernVBertProcessor(Idefics3Processor):
 @auto_docstring
 class ColModernVBertPreTrainedModel(ColPaliPreTrainedModel):
     config: ColModernVBertConfig
+
 
 @dataclass
 @auto_docstring(

@@ -254,9 +254,7 @@ class ColModernVBertForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
                         tensor1, tensor2, msg="Running save/load and forward yields different results"
                     )
             else:
-                torch.testing.assert_close(
-                    first, second, msg="Running save/load and forward yields different results"
-                )
+                torch.testing.assert_close(first, second, msg="Running save/load and forward yields different results")
 
 
 @require_torch

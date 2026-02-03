@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import math
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -21,7 +20,6 @@ import torch
 import torch.nn as nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
-from ..auto import AutoModel, AutoConfig, CONFIG_MAPPING
 from ... import initialization as init
 from ...configuration_utils import PretrainedConfig
 from ...modeling_outputs import (
@@ -33,13 +31,14 @@ from ...modeling_outputs import (
 from ...modeling_utils import PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring, logging
-from ...utils.generic import check_model_inputs, can_return_tuple
+from ...utils.generic import can_return_tuple
+from ..auto import CONFIG_MAPPING, AutoConfig, AutoModel
 from ..modernbert.modeling_modernbert import ModernBertPredictionHead
-
 from ..smolvlm.modeling_smolvlm import SmolVLMModel
 
 
 logger = logging.get_logger(__name__)
+
 
 class ModernVBertConfig(PretrainedConfig):
     r"""
@@ -201,7 +200,9 @@ class ModernVBertConnector(nn.Module):
         batch_size, seq_length, embed_dim = image_hidden_states.size()
         height = width = int(seq_length**0.5)
         image_hidden_states = image_hidden_states.view(batch_size, height, width, embed_dim)
-        image_hidden_states = image_hidden_states.view(batch_size, height, int(width / pixel_shuffle_factor), embed_dim * pixel_shuffle_factor)
+        image_hidden_states = image_hidden_states.view(
+            batch_size, height, int(width / pixel_shuffle_factor), embed_dim * pixel_shuffle_factor
+        )
         image_hidden_states = image_hidden_states.permute(0, 2, 1, 3)
         image_hidden_states = image_hidden_states.reshape(
             batch_size,
@@ -232,6 +233,7 @@ class ModernVBertPreTrainedModel(PreTrainedModel):
 
     def _init_weights(self, module):
         super()._init_weights(module)
+
         def init_weight(module: nn.Module, std: float):
             cutoff_factor = getattr(self.config, "initializer_cutoff_factor", 2.0)
             init.trunc_normal_(
@@ -261,6 +263,7 @@ class ModernVBertPreTrainedModel(PreTrainedModel):
         ):
             final_out_std = self.config.initializer_range / math.sqrt(self.config.text_config.hidden_size)
             init_weight(module.classifier, final_out_std)
+
 
 @auto_docstring(
     custom_intro="""
@@ -438,6 +441,7 @@ class ModernVBertForMaskedLM(ModernVBertPreTrainedModel):
             attentions=outputs.attentions,
             image_hidden_states=outputs.image_hidden_states,
         )
+
 
 @auto_docstring(
     custom_intro="""

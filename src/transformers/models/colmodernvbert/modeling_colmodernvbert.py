@@ -25,7 +25,8 @@ from torch import nn
 
 from ... import initialization as init
 from ...modeling_utils import PreTrainedModel
-from ...utils import ModelOutput, auto_docstring, can_return_tuple
+from ...utils import ModelOutput, auto_docstring
+from ...utils.generic import check_model_inputs
 from ..auto.modeling_auto import AutoModel
 from .configuration_colmodernvbert import ColModernVBertConfig
 
@@ -130,7 +131,7 @@ class ColModernVBertForRetrieval(ColModernVBertPreTrainedModel):
 
         self.post_init()
 
-    @can_return_tuple
+    @check_model_inputs
     @auto_docstring
     def forward(
         self,

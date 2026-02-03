@@ -38,6 +38,7 @@ class ColModernVBertProcessorKwargs(ProcessingKwargs, total=False):
             "padding": "longest",
         },
         "images_kwargs": {
+            "return_row_col_info": True,
             "data_format": "channels_first",
             "do_convert_rgb": True,
         },

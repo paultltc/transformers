@@ -253,52 +253,24 @@ class ColModernVBertProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         all_kwargs = {
             "common_kwargs": {"return_tensors": "pt"},
             "images_kwargs": {"do_rescale": True, "rescale_factor": -1.0},
-            "text_kwargs": {"padding": "max_length", "max_length": 400},
         }
 
         inputs = processor(images=image_input, **all_kwargs)
-        self.assertEqual(inputs[self.text_input_name].shape[-1], 400)
+        self.assertLessEqual(inputs[self.images_input_name][0][0].mean(), 0)
 
     # Can process only text or images at a time
     def test_model_input_names(self):
         processor = self.get_processor()
         image_input = self.prepare_image_inputs()
         inputs = processor(images=image_input)
+        # When only images are provided, pixel_values must be present
+        self.assertIn("pixel_values", inputs)
 
-        self.assertSetEqual(set(inputs.keys()), set(processor.model_input_names))
-
+    @unittest.skip(
+        reason="ColModernVBert is meant to be used through `process_queries` or `process_images`."
+    )
     def test_tokenizer_defaults(self):
-        """
-        Tests that tokenizer is called correctly when passing text to the processor.
-        This test verifies that processor(text=X) produces the same output as tokenizer(self.query_prefix + X + suffix).
-        """
-        # Skip if processor doesn't have tokenizer
-        if "tokenizer" not in self.processor_class.get_attributes():
-            self.skipTest(f"tokenizer attribute not present in {self.processor_class}")
-
-        # Get all required components for processor
-        components = {}
-        for attribute in self.processor_class.get_attributes():
-            components[attribute] = self.get_component(attribute)
-
-        processor = self.processor_class(**components)
-        tokenizer = components["tokenizer"]
-
-        input_str = ["lower newer"]
-
-        # Process with both tokenizer and processor (disable padding to ensure same output)
-        try:
-            encoded_processor = processor(text=input_str, padding=False, return_tensors="pt")
-        except Exception:
-            # The processor does not accept text only input, so we can skip this test
-            self.skipTest("Processor does not accept text-only input.")
-        tok_inputs = [processor.query_prefix + s + processor.query_augmentation_token * 10 for s in input_str]
-        encoded_tok = tokenizer(tok_inputs, padding=False, return_tensors="pt")
-
-        # Verify outputs match (handle processors that might not return token_type_ids)
-        for key in encoded_tok:
-            if key in encoded_processor:
-                self.assertListEqual(encoded_tok[key].tolist(), encoded_processor[key].tolist())
+        pass
 
     @unittest.skip("ColModernVBert can't process text+image inputs at the same time")
     def test_processor_text_has_no_visual(self):

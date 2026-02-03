@@ -14,6 +14,7 @@
 """Testing suite for the PyTorch ModernVBERT model."""
 
 import copy
+import os
 import tempfile
 import unittest
 from typing import ClassVar
@@ -30,6 +31,7 @@ from transformers import (
 )
 from transformers.configuration_utils import PreTrainedConfig
 from transformers.modeling_utils import PreTrainedModel
+from transformers.utils import CONFIG_NAME
 from transformers.testing_utils import (
     require_torch,
     slow,
@@ -126,13 +128,15 @@ class ModernVBertModelTester:
         self.type_sequence_label_size = type_sequence_label_size
 
     def get_config(self):
-        return ModernVBertConfig(
+        config = ModernVBertConfig(
             text_config=self.text_config,
             vision_config=self.vision_config,
             image_token_id=self.image_token_id,
             pixel_shuffle_factor=self.pixel_shuffle_factor,
             vocab_size=self.vocab_size,
+            attn_implementation={"text_config": "sdpa"},
         )
+        return config
 
     def prepare_config_and_inputs(self):
         pixel_values = floats_tensor([self.batch_size, self.num_images, 3, self.image_size, self.image_size])
@@ -270,6 +274,7 @@ class ModernVBertModelTest(ModelTesterMixin, unittest.TestCase):
     test_cpu_offload = False  # Disabled due to nn.MultiheadAttention compatibility issues with accelerate
     test_disk_offload_bin = False  # Disabled due to nn.MultiheadAttention compatibility issues with accelerate
     test_disk_offload_safetensors = False  # Disabled due to nn.MultiheadAttention compatibility issues with accelerate
+    skip_test_image_features_output_shape = True  # ModernVBert merges batch_size with num_images in index 0
 
     def setUp(self):
         self.model_tester = ModernVBertModelTester(self)
@@ -332,7 +337,8 @@ class ModernVBertModelTest(ModelTesterMixin, unittest.TestCase):
 
             vision_model_sdpa = getattr(model_sdpa, vision_model_name)
             language_model_sdpa = getattr(model_sdpa, language_model_name)
-            text_attn = "sdpa" if language_model_sdpa._supports_sdpa else "eager"
+            # ModernBert defaults to flash_attention_2 when available, not sdpa
+            text_attn = language_model_sdpa.config._attn_implementation
             vision_attn = "sdpa" if vision_model_sdpa._supports_sdpa else "eager"
 
             # `None` as it is the requested one which will be assigned to each sub-config
@@ -503,6 +509,53 @@ class ModernVBertModelTest(ModelTesterMixin, unittest.TestCase):
 
     @unittest.skip(reason="Vision head's probe has no gradient.")
     def test_training_gradient_checkpointing_use_reentrant_true(self):
+        pass
+
+    # ModernBERT defaults to FlashAttention when available, but FA only supports fp16 and bf16 data types.
+    # Override tests that reconstruct configs or use from_pretrained to ensure SDPA is used for the text backbone.
+    def test_save_load(self):
+        for model_class in self.all_model_classes:
+            config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
+            model = model_class(config)
+            model.to(torch_device)
+            model.eval()
+            with torch.no_grad():
+                first = model(**self._prepare_for_class(inputs_dict, model_class))[0]
+
+            with tempfile.TemporaryDirectory() as tmpdirname:
+                model.save_pretrained(tmpdirname)
+                self.assertTrue(os.path.exists(os.path.join(tmpdirname, CONFIG_NAME)))
+
+                # Force SDPA on text backbone for FA dtype compatibility
+                model = model_class.from_pretrained(tmpdirname, attn_implementation={"text_config": "sdpa"})
+                model.to(torch_device)
+                model.eval()
+                with torch.no_grad():
+                    second = model(**self._prepare_for_class(inputs_dict, model_class))[0]
+
+                model.save_pretrained(tmpdirname)
+                model = model_class.from_pretrained(tmpdirname, attn_implementation={"text_config": "sdpa"})
+
+            if isinstance(first, tuple) and isinstance(second, tuple):
+                for tensor1, tensor2 in zip(first, second):
+                    torch.testing.assert_close(
+                        tensor1, tensor2, msg="Running save/load and forward yields different results"
+                    )
+            else:
+                torch.testing.assert_close(first, second, msg="Running save/load and forward yields different results")
+
+    @unittest.skip(
+        reason="ModernBERT text backbone defaults to FlashAttention which only supports fp16/bf16. "
+        "This test reconstructs config from to_diff_dict() which loses _attn_implementation."
+    )
+    def test_model_forward_default_config_values(self):
+        pass
+
+    @unittest.skip(
+        reason="ModernBERT text backbone defaults to FlashAttention which only supports fp16/bf16. "
+        "This test reconstructs model from meta device without preserving _attn_implementation."
+    )
+    def test_all_tensors_are_parameter_or_buffer(self):
         pass
 
     def flash_attn_can_dispatch_composite_models(self, attn_implementation: str):

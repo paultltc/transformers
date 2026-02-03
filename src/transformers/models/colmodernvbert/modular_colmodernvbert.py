@@ -24,7 +24,8 @@ from ...feature_extraction_utils import BatchFeature
 from ...image_utils import ImageInput, is_valid_image, load_image
 from ...processing_utils import ProcessingKwargs, Unpack
 from ...tokenization_utils_base import AddedToken, BatchEncoding, PreTokenizedInput, TextInput
-from ...utils import ModelOutput, auto_docstring, can_return_tuple, is_torch_available, logging
+from ...utils.generic import check_model_inputs
+from ...utils import ModelOutput, auto_docstring, is_torch_available, logging
 from ..auto.modeling_auto import AutoModel
 from ..colpali.modeling_colpali import ColPaliForRetrieval, ColPaliPreTrainedModel
 from ..colqwen2.configuration_colqwen2 import ColQwen2Config
@@ -73,6 +74,7 @@ class ColModernVBertProcessorKwargs(Idefics3ProcessorKwargs, total=False):
             "padding": "longest",
         },
         "images_kwargs": {
+            "return_row_col_info": True,
             "data_format": "channels_first",
             "do_convert_rgb": True,
         },
@@ -375,7 +377,7 @@ class ColModernVBertForRetrieval(ColPaliForRetrieval):
         del self._tied_weights_keys
         self.post_init()
 
-    @can_return_tuple
+    @check_model_inputs
     @auto_docstring
     def forward(
         self,

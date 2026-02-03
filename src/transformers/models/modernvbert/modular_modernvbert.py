@@ -33,7 +33,7 @@ from ...modeling_outputs import (
 from ...modeling_utils import PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring, logging
-from ...utils.generic import check_model_inputs
+from ...utils.generic import check_model_inputs, can_return_tuple
 from ..modernbert.modeling_modernbert import ModernBertPredictionHead
 
 from ..smolvlm.modeling_smolvlm import SmolVLMModel
@@ -287,7 +287,7 @@ class ModernVBertModel(ModernVBertPreTrainedModel, SmolVLMModel):
         # initialize weights and apply final processing
         self.post_init()
 
-    @check_model_inputs
+    @can_return_tuple
     @auto_docstring(
         custom_intro="""
         Inputs fed to the model can have an arbitrary number of images. To account for this, pixel_values fed to
@@ -325,7 +325,7 @@ class ModernVBertModel(ModernVBertPreTrainedModel, SmolVLMModel):
         if pixel_values is not None:
             image_hidden_states = self.get_image_features(
                 pixel_values=pixel_values, pixel_attention_mask=pixel_attention_mask
-            )
+            ).pooler_output
 
         # Merge image and text embeddings
         if image_hidden_states is not None:
@@ -344,6 +344,9 @@ class ModernVBertModel(ModernVBertPreTrainedModel, SmolVLMModel):
 
         return ModernVBertBaseModelOutput(
             last_hidden_state=outputs.last_hidden_state,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+            image_hidden_states=image_hidden_states,
         )
 
 
@@ -373,7 +376,7 @@ class ModernVBertForMaskedLM(ModernVBertPreTrainedModel):
     def set_output_embeddings(self, new_embeddings):
         self.lm_head = new_embeddings
 
-    @check_model_inputs
+    @can_return_tuple
     @auto_docstring(
         custom_intro="""
         Inputs fed to the model can have an arbitrary number of images. To account for this, pixel_values fed to
@@ -431,6 +434,9 @@ class ModernVBertForMaskedLM(ModernVBertPreTrainedModel):
         return ModernVBertMaskedLMOutput(
             loss=loss,
             logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+            image_hidden_states=outputs.image_hidden_states,
         )
 
 @auto_docstring(
@@ -452,7 +458,7 @@ class ModernVBertForSequenceClassification(ModernVBertPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @check_model_inputs
+    @can_return_tuple
     @auto_docstring(
         custom_intro="""
         Inputs fed to the model can have an arbitrary number of images. To account for this, pixel_values fed to
@@ -556,6 +562,8 @@ class ModernVBertForSequenceClassification(ModernVBertPreTrainedModel):
         return SequenceClassifierOutput(
             loss=loss,
             logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
         )
 
 
@@ -577,7 +585,7 @@ class ModernVBertForTokenClassification(ModernVBertPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @check_model_inputs
+    @can_return_tuple
     @auto_docstring(
         custom_intro="""
         Inputs fed to the model can have an arbitrary number of images. To account for this, pixel_values fed to
@@ -637,6 +645,8 @@ class ModernVBertForTokenClassification(ModernVBertPreTrainedModel):
         return TokenClassifierOutput(
             loss=loss,
             logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
         )
 
 

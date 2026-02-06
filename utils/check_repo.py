@@ -110,9 +110,6 @@ PRIVATE_MODELS = [
     "PeAudioPreTrainedModel",
     "PeAudioVideoPreTrainedModel",
     "PeVideoPreTrainedModel",
-    "ModernVBertTextModel",
-    "ModernVBertVisionModel",
-    "ModernVBertVisionTransformer",
 ]
 
 # Update this list for models that are not tested with a comment explaining the reason it should not be.

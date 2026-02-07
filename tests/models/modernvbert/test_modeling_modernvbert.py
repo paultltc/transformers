@@ -31,6 +31,7 @@ from transformers import (
 from transformers.testing_utils import (
     cleanup,
     require_torch,
+    slow,
     torch_device,
 )
 
@@ -504,9 +505,7 @@ class ModernVBertModelTest(ModelTesterMixin, unittest.TestCase):
 
 @require_torch
 class ModernVBertForMaskedLMIntegrationTest(unittest.TestCase):
-    model_name: ClassVar[str] = (
-        "/home/paul/mvbert/debug/mvb_models/mvb"  # TODO: replace with actual model name on HF when available
-    )
+    model_name: ClassVar[str] = "paultltc/modernvbert_hf"
 
     def setUp(self):
         self.torch_dtype = torch.float32
@@ -521,8 +520,7 @@ class ModernVBertForMaskedLMIntegrationTest(unittest.TestCase):
     def tearDown(self):
         cleanup(torch_device, gc_collect=True)
 
-    # @slow
-    # @unittest.skip(reason="Model not available on HF for the moment.")    # TODO: replace with actual model name on HF when available
+    @slow
     def test_masked_lm_inference(self):
         image = Image.open(hf_hub_download("HuggingFaceTB/SmolVLM", "example_images/rococo.jpg", repo_type="space"))
         text = "This [MASK] is on the wall."

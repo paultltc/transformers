@@ -34,6 +34,7 @@ from transformers.testing_utils import (
     cleanup,
     require_torch,
     require_vision,
+    slow,
     torch_device,
 )
 
@@ -185,9 +186,7 @@ class ColModernVBertForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
 
 @require_torch
 class ColModernVBertModelIntegrationTest(unittest.TestCase):
-    model_name: ClassVar[str] = (
-        "/home/paul/mvbert/debug/mvb_models/colmvb__hf"  # TODO: replace with actual model name on HF when available
-    )
+    model_name: ClassVar[str] = "paultltc/colmodernvbert_hf"
 
     def setUp(self):
         self.model_dtype = torch.float32
@@ -204,8 +203,7 @@ class ColModernVBertModelIntegrationTest(unittest.TestCase):
     def tearDown(self):
         cleanup(torch_device, gc_collect=True)
 
-    # @slow
-    # @unittest.skip(reason="Model not available on HF for the moment.")  # TODO: replace with actual model name on HF when available
+    @slow
     def test_model_integration_test(self):
         """
         Test if the model is able to retrieve the correct pages for a small and easy dataset.

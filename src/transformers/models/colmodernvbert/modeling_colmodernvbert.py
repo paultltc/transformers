@@ -25,8 +25,9 @@ from torch import nn
 
 from ... import initialization as init
 from ...modeling_utils import PreTrainedModel
-from ...utils import ModelOutput, auto_docstring
-from ...utils.generic import check_model_inputs
+from ...processing_utils import Unpack
+from ...utils import ModelOutput, TransformersKwargs, auto_docstring
+from ...utils.generic import can_return_tuple
 from ..auto.modeling_auto import AutoModel
 from .configuration_colmodernvbert import ColModernVBertConfig
 
@@ -72,17 +73,10 @@ class ColModernVBertForRetrievalOutput(ModelOutput):
         Language modeling loss (for next-token prediction).
     embeddings (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):
         The embeddings of the model.
-    hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
-        Tuple of `torch.FloatTensor` (one for the output of the embeddings + one for the output of each layer) of shape
-        `(batch_size, sequence_length, hidden_size)`.
-        Hidden-states of the model at the output of each layer plus the initial embedding outputs.
     image_hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True` and `pixel_values` are provided):
         Tuple of `torch.FloatTensor` (one for the output of the image modality projection + one for the output of each layer) of shape
         `(batch_size, num_channels, image_size, image_size)`.
         Hidden-states of the image encoder at the output of each layer plus the initial modality projection outputs.
-    attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
-        Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length, sequence_length)`.
-        Attentions weights after the attention softmax, used to compute the weighted average in the self-attention heads.
     """
 
     loss: torch.FloatTensor | None = None
@@ -110,12 +104,7 @@ class ColModernVBertForRetrievalOutput(ModelOutput):
     """
 )
 class ColModernVBertForRetrieval(ColModernVBertPreTrainedModel):
-    _checkpoint_conversion_mapping = {
-        "vlm.language_model.model": "vlm.model.language_model",
-        "vlm.vision_tower": "vlm.model.vision_tower",
-        "vlm.multi_modal_projector": "vlm.model.multi_modal_projector",
-        "vlm.language_model.lm_head": "vlm.lm_head",
-    }
+    _checkpoint_conversion_mapping = {}
 
     def __init__(self, config: ColModernVBertConfig):
         super().__init__(config)
@@ -131,14 +120,14 @@ class ColModernVBertForRetrieval(ColModernVBertPreTrainedModel):
 
         self.post_init()
 
-    @check_model_inputs
+    @can_return_tuple
     @auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
         pixel_values: torch.FloatTensor | None = None,
         attention_mask: torch.Tensor | None = None,
-        **kwargs,
+        **kwargs: Unpack[TransformersKwargs],
     ) -> ColModernVBertForRetrievalOutput:
         output_attentions = kwargs.pop("output_attentions", self.config.output_attentions)
         output_hidden_states = kwargs.pop("output_hidden_states", self.config.output_hidden_states)

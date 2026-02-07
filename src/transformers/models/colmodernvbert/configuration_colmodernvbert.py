@@ -51,7 +51,7 @@ class ColModernVBertConfig(PreTrainedConfig):
     Example:
 
     ```python
-    from transformers.models.ColModernVBert import ColModernVBertConfig, ColModernVBertForRetrieval
+    from transformers import ColModernVBertConfig, ColModernVBertForRetrieval
 
     config = ColModernVBertConfig()
     model = ColModernVBertForRetrieval(config)

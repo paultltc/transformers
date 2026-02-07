@@ -37,7 +37,7 @@ from ...modeling_outputs import (
 from ...modeling_utils import PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring, torch_compilable_check
-from ...utils.generic import can_return_tuple
+from ...utils.generic import can_return_tuple, check_model_inputs
 from ..auto import AutoModel
 from .configuration_modernvbert import ModernVBertConfig
 
@@ -144,15 +144,25 @@ class ModernVBertConnector(nn.Module):
 
 @auto_docstring
 class ModernVBertPreTrainedModel(PreTrainedModel):
-    config_class = ModernVBertConfig
+    config: ModernVBertConfig
     base_model_prefix = "model"
+    input_modalities = ("image", "text")
     supports_gradient_checkpointing = True
+    _no_split_modules = [
+        "ModernBertEmbeddings",
+        "ModernBertEncoderLayer",
+        "SiglipEncoderLayer",
+        "SiglipMultiheadAttentionPoolingHead",
+    ]
+    _skip_keys_device_placement = "past_key_values"
     _supports_flash_attn = True
     _supports_sdpa = True
     _supports_flex_attn = False
-    input_modalities = ["image", "text"]
+    _supports_attention_backend = True
+    config_class = ModernVBertConfig
     _can_record_outputs = {"image_hidden_states": ModernVBertConnector}
 
+    @torch.no_grad()
     def _init_weights(self, module):
         super()._init_weights(module)
 
@@ -323,7 +333,7 @@ class ModernVBertModel(ModernVBertPreTrainedModel):
 
         return image_outputs
 
-    @can_return_tuple
+    @check_model_inputs
     @auto_docstring(
         custom_intro="""
         Inputs fed to the model can have an arbitrary number of images. To account for this, pixel_values fed to
@@ -420,7 +430,7 @@ class ModernVBertForMaskedLM(ModernVBertPreTrainedModel):
     def set_output_embeddings(self, new_embeddings):
         self.lm_head = new_embeddings
 
-    @can_return_tuple
+    @check_model_inputs
     @auto_docstring(
         custom_intro="""
         Inputs fed to the model can have an arbitrary number of images. To account for this, pixel_values fed to
@@ -503,7 +513,7 @@ class ModernVBertForSequenceClassification(ModernVBertPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @can_return_tuple
+    @check_model_inputs
     @auto_docstring(
         custom_intro="""
         Inputs fed to the model can have an arbitrary number of images. To account for this, pixel_values fed to
@@ -526,8 +536,6 @@ class ModernVBertForSequenceClassification(ModernVBertPreTrainedModel):
         pixel_attention_mask: torch.BoolTensor | None = None,
         image_hidden_states: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
-        batch_size: int | None = None,
-        seq_len: int | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple | SequenceClassifierOutput:
         r"""
@@ -539,25 +547,7 @@ class ModernVBertForSequenceClassification(ModernVBertPreTrainedModel):
             Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
             text_config.]` or `model.image_token_id`. Tokens with indices set to `model.image_token_id` are
             ignored (masked), the loss is only computed for the tokens with labels in `[0, ..., text_config.]`.
-        batch_size (`int`, *optional*):
-            The batch size of the input. If not provided, it will be inferred from `input_ids` or `inputs_embeds`.
-        seq_len (`int`, *optional*):
-            The sequence length of the input. If not provided, it will be inferred from `input_ids` or `inputs_embeds`.
         """
-
-        if input_ids is not None:
-            self.warn_if_padding_and_no_attention_mask(input_ids, attention_mask)
-
-        if batch_size is None and seq_len is None:
-            if inputs_embeds is not None:
-                batch_size, seq_len = inputs_embeds.shape[:2]
-            else:
-                batch_size, seq_len = input_ids.shape[:2]
-        device = input_ids.device if input_ids is not None else inputs_embeds.device
-
-        if attention_mask is None:
-            attention_mask = torch.ones((batch_size, seq_len), device=device, dtype=torch.bool)
-
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -573,6 +563,14 @@ class ModernVBertForSequenceClassification(ModernVBertPreTrainedModel):
         if self.config.classifier_pooling == "cls":
             last_hidden_state = last_hidden_state[:, 0]
         elif self.config.classifier_pooling == "mean":
+            if inputs_embeds is not None:
+                batch_size, seq_len = inputs_embeds.shape[:2]
+            else:
+                batch_size, seq_len = input_ids.shape[:2]
+            device = input_ids.device if input_ids is not None else inputs_embeds.device
+
+            if attention_mask is None:
+                attention_mask = torch.ones((batch_size, seq_len), device=device, dtype=torch.bool)
             last_hidden_state = (last_hidden_state * attention_mask.unsqueeze(-1)).sum(dim=1) / attention_mask.sum(
                 dim=1, keepdim=True
             )
@@ -630,7 +628,7 @@ class ModernVBertForTokenClassification(ModernVBertPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @can_return_tuple
+    @check_model_inputs
     @auto_docstring(
         custom_intro="""
         Inputs fed to the model can have an arbitrary number of images. To account for this, pixel_values fed to

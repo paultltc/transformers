@@ -21,8 +21,8 @@ from ...feature_extraction_utils import BatchFeature
 from ...image_utils import ImageInput, is_valid_image
 from ...processing_utils import Unpack
 from ...tokenization_utils_base import TextInput
-from ...utils import ModelOutput, auto_docstring, logging
-from ...utils.generic import check_model_inputs
+from ...utils import ModelOutput, TransformersKwargs, auto_docstring, logging
+from ...utils.generic import can_return_tuple
 from ..auto.modeling_auto import AutoModel
 from ..colpali.modeling_colpali import ColPaliForRetrieval, ColPaliPreTrainedModel
 from ..colqwen2.configuration_colqwen2 import ColQwen2Config
@@ -54,7 +54,7 @@ class ColModernVBertConfig(ColQwen2Config):
     Example:
 
     ```python
-    from transformers.models.ColModernVBert import ColModernVBertConfig, ColModernVBertForRetrieval
+    from transformers import ColModernVBertConfig, ColModernVBertForRetrieval
 
     config = ColModernVBertConfig()
     model = ColModernVBertForRetrieval(config)
@@ -135,10 +135,9 @@ class ColModernVBertProcessor(Idefics3Processor):
         **kwargs: Unpack[ColModernVBertProcessorKwargs],
     ) -> BatchFeature:
         """
-        Prepare for the model one or several image(s). This method is a wrapper around the `__call__` method of the ColQwen2Processor's
-        [`ColQwen2Processor.__call__`].
-
-        This method forwards the `images` and `kwargs` arguments to the image processor.
+        Prepare for the model one or several image(s). Handles input validation, RGB conversion,
+        and prepends the `visual_prompt_prefix` to each image. Optionally computes labels from
+        `token_type_ids` when a `suffix` is provided in `text_kwargs`.
 
         Args:
             images (`PIL.Image.Image`, `np.ndarray`, `torch.Tensor`, `list[PIL.Image.Image]`, `list[np.ndarray]`, `list[torch.Tensor]`):
@@ -170,6 +169,7 @@ class ColModernVBertProcessor(Idefics3Processor):
 
         return_token_type_ids = suffix is not None
 
+        # Normalize input to a flat list of images
         if is_valid_image(images):
             images = [images]
         elif isinstance(images, list) and is_valid_image(images[0]):
@@ -177,8 +177,10 @@ class ColModernVBertProcessor(Idefics3Processor):
         elif not (isinstance(images, list) and isinstance(images[0], list) and is_valid_image(images[0][0])):
             raise ValueError("images must be an image, list of images or list of list of images")
 
+        # Ensure all images are in RGB format
         images = [image.convert("RGB") for image in images]
 
+        # Pair each image with the visual prompt prefix for the VLM backbone
         batch_doc = self.__call__(
             text=[self.visual_prompt_prefix] * len(images),
             images=images,
@@ -186,6 +188,7 @@ class ColModernVBertProcessor(Idefics3Processor):
             text_kwargs=output_kwargs["text_kwargs"],
         )
 
+        # When suffix is provided, generate labels by masking non-suffix tokens
         if return_token_type_ids:
             labels = batch_doc["input_ids"].masked_fill(batch_doc["token_type_ids"] == 0, -100)
             batch_doc.update({"labels": labels})
@@ -198,10 +201,9 @@ class ColModernVBertProcessor(Idefics3Processor):
         **kwargs: Unpack[ColModernVBertProcessorKwargs],
     ) -> BatchFeature:
         """
-        Prepare for the model one or several texts. This method is a wrapper around the `__call__` method of the ColQwen2Processor's
-        [`ColQwen2Processor.__call__`].
-
-        This method forwards the `text` and `kwargs` arguments to the tokenizer.
+        Prepare for the model one or several text queries. Handles input validation, prepends the
+        `query_prefix`, and appends query augmentation tokens (used to pad query embeddings for
+        better late-interaction retrieval performance).
 
         Args:
             text (`str`, `list[str]`, `list[list[str]]`):
@@ -235,9 +237,11 @@ class ColModernVBertProcessor(Idefics3Processor):
         elif not (isinstance(text, list) and isinstance(text[0], str)):
             raise ValueError("Text must be a string or a list of strings")
 
+        # Default suffix: repeat the augmentation token to pad query embeddings
         if suffix is None:
             suffix = self.query_augmentation_token * 10
 
+        # Build final queries: prefix + original query + augmentation suffix
         texts_query: list[str] = [self.query_prefix + query + suffix for query in text]
 
         batch_query = self.__call__(
@@ -330,17 +334,10 @@ class ColModernVBertForRetrievalOutput(ModelOutput):
         Language modeling loss (for next-token prediction).
     embeddings (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`):
         The embeddings of the model.
-    hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
-        Tuple of `torch.FloatTensor` (one for the output of the embeddings + one for the output of each layer) of shape
-        `(batch_size, sequence_length, hidden_size)`.
-        Hidden-states of the model at the output of each layer plus the initial embedding outputs.
     image_hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True` and `pixel_values` are provided):
         Tuple of `torch.FloatTensor` (one for the output of the image modality projection + one for the output of each layer) of shape
         `(batch_size, num_channels, image_size, image_size)`.
         Hidden-states of the image encoder at the output of each layer plus the initial modality projection outputs.
-    attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
-        Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length, sequence_length)`.
-        Attentions weights after the attention softmax, used to compute the weighted average in the self-attention heads.
     """
 
     loss: torch.FloatTensor | None = None
@@ -368,20 +365,21 @@ class ColModernVBertForRetrievalOutput(ModelOutput):
     """
 )
 class ColModernVBertForRetrieval(ColPaliForRetrieval):
+    _checkpoint_conversion_mapping = {}
+
     def __init__(self, config: ColModernVBertConfig):
         super().__init__(config)
         self.vlm = AutoModel.from_config(config.vlm_config)
-        del self._tied_weights_keys
         self.post_init()
 
-    @check_model_inputs
+    @can_return_tuple
     @auto_docstring
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
         pixel_values: torch.FloatTensor | None = None,
         attention_mask: torch.Tensor | None = None,
-        **kwargs,
+        **kwargs: Unpack[TransformersKwargs],
     ) -> ColModernVBertForRetrievalOutput:
         output_attentions = kwargs.pop("output_attentions", self.config.output_attentions)
         output_hidden_states = kwargs.pop("output_hidden_states", self.config.output_hidden_states)

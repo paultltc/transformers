@@ -1,4 +1,4 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,6 @@
 """Testing suite for the PyTorch ModernVBERT model."""
 
 import copy
-import os
 import tempfile
 import unittest
 from typing import ClassVar
@@ -29,15 +28,11 @@ from transformers import (
     is_torch_available,
     is_vision_available,
 )
-from transformers.configuration_utils import PreTrainedConfig
-from transformers.modeling_utils import PreTrainedModel
 from transformers.testing_utils import (
+    cleanup,
     require_torch,
-    slow,
     torch_device,
 )
-from transformers.utils import CONFIG_NAME
-from transformers.utils.import_utils import is_flash_attn_2_available, is_torch_bf16_available_on_device
 
 from ...test_configuration_common import ConfigTester
 from ...test_modeling_common import (
@@ -69,42 +64,46 @@ class ModernVBertModelTester:
         parent,
         batch_size=2,
         num_images=2,
-        text_config={
-            "vocab_size": 99,
-            "pad_token_id": 0,
-            "hidden_size": 32,
-            "num_hidden_layers": 2,
-            "num_attention_heads": 4,
-            "intermediate_size": 64,
-            "hidden_activation": "gelu",
-            "mlp_dropout": 0.1,
-            "attention_dropout": 0.1,
-            "embedding_dropout": 0.1,
-            "classifier_dropout": 0.1,
-            "max_position_embeddings": 512,
-            "type_vocab_size": 2,
-            "is_decoder": False,
-            "initializer_range": 0.02,
-            "reference_compile": False,
-        },
+        text_config=None,
         is_training=True,
-        vision_config={
-            "image_size": 16,
-            "patch_size": 4,
-            "hidden_size": 64,
-            "num_hidden_layers": 2,
-            "num_attention_heads": 4,
-            "intermediate_size": 32,
-            "dropout": 0.1,
-            "attention_dropout": 0.1,
-            "initializer_range": 0.02,
-        },
+        vision_config=None,
         image_token_id: int = 98,
         pixel_shuffle_factor=2,
         num_labels=3,
         use_labels=True,
         type_sequence_label_size=2,
     ):
+        if text_config is None:
+            text_config = {
+                "vocab_size": 99,
+                "pad_token_id": 0,
+                "hidden_size": 32,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 4,
+                "intermediate_size": 64,
+                "hidden_activation": "gelu",
+                "mlp_dropout": 0.1,
+                "attention_dropout": 0.1,
+                "embedding_dropout": 0.1,
+                "classifier_dropout": 0.1,
+                "max_position_embeddings": 512,
+                "type_vocab_size": 2,
+                "is_decoder": False,
+                "initializer_range": 0.02,
+                "reference_compile": False,
+            }
+        if vision_config is None:
+            vision_config = {
+                "image_size": 16,
+                "patch_size": 4,
+                "hidden_size": 64,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 4,
+                "intermediate_size": 32,
+                "dropout": 0.1,
+                "attention_dropout": 0.1,
+                "initializer_range": 0.02,
+            }
         self.parent = parent
         self.batch_size = batch_size
         self.text_config = ModernBertConfig(**text_config)
@@ -271,10 +270,8 @@ class ModernVBertModelTest(ModelTesterMixin, unittest.TestCase):
 
     _is_composite = True
     test_mismatched_shapes = False
-    test_cpu_offload = False  # Disabled due to nn.MultiheadAttention compatibility issues with accelerate
-    test_disk_offload_bin = False  # Disabled due to nn.MultiheadAttention compatibility issues with accelerate
-    test_disk_offload_safetensors = False  # Disabled due to nn.MultiheadAttention compatibility issues with accelerate
     skip_test_image_features_output_shape = True  # ModernVBert merges batch_size with num_images in index 0
+    model_split_percents = [0.5, 0.8, 0.9]
 
     def setUp(self):
         self.model_tester = ModernVBertModelTester(self)
@@ -488,19 +485,12 @@ class ModernVBertModelTest(ModelTesterMixin, unittest.TestCase):
             # Check that the model can still do a forward pass successfully (every parameter should be resized)
             model(**self._prepare_for_class(inputs_dict, model_class))
 
-    # skip test multi gpu
     @unittest.skip(reason="ModernVBERT model parallelism causes error: self.dtype is broken.")
     def test_multi_gpu_data_parallel_forward(self):
         pass
 
-    # skip test_training_gradient_checkpointing
     @unittest.skip(reason="Vision head's probe has no gradient.")
     def test_training_gradient_checkpointing(self):
-        pass
-
-    # skip test_training_gradient_checkpointing_use_reentrant
-    @unittest.skip(reason="Vision head's probe has no gradient.")
-    def test_training_gradient_checkpointing_use_reentrant(self):
         pass
 
     @unittest.skip(reason="Vision head's probe has no gradient.")
@@ -511,153 +501,47 @@ class ModernVBertModelTest(ModelTesterMixin, unittest.TestCase):
     def test_training_gradient_checkpointing_use_reentrant_true(self):
         pass
 
-    # ModernBERT defaults to FlashAttention when available, but FA only supports fp16 and bf16 data types.
-    # Override tests that reconstruct configs or use from_pretrained to ensure SDPA is used for the text backbone.
-    def test_save_load(self):
-        for model_class in self.all_model_classes:
-            config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
-            model = model_class(config)
-            model.to(torch_device)
-            model.eval()
-            with torch.no_grad():
-                first = model(**self._prepare_for_class(inputs_dict, model_class))[0]
-
-            with tempfile.TemporaryDirectory() as tmpdirname:
-                model.save_pretrained(tmpdirname)
-                self.assertTrue(os.path.exists(os.path.join(tmpdirname, CONFIG_NAME)))
-
-                # Force SDPA on text backbone for FA dtype compatibility
-                model = model_class.from_pretrained(tmpdirname, attn_implementation={"text_config": "sdpa"})
-                model.to(torch_device)
-                model.eval()
-                with torch.no_grad():
-                    second = model(**self._prepare_for_class(inputs_dict, model_class))[0]
-
-                model.save_pretrained(tmpdirname)
-                model = model_class.from_pretrained(tmpdirname, attn_implementation={"text_config": "sdpa"})
-
-            if isinstance(first, tuple) and isinstance(second, tuple):
-                for tensor1, tensor2 in zip(first, second):
-                    torch.testing.assert_close(
-                        tensor1, tensor2, msg="Running save/load and forward yields different results"
-                    )
-            else:
-                torch.testing.assert_close(first, second, msg="Running save/load and forward yields different results")
-
-    @unittest.skip(
-        reason="ModernBERT text backbone defaults to FlashAttention which only supports fp16/bf16. "
-        "This test reconstructs config from to_diff_dict() which loses _attn_implementation."
-    )
-    def test_model_forward_default_config_values(self):
-        pass
-
-    @unittest.skip(
-        reason="ModernBERT text backbone defaults to FlashAttention which only supports fp16/bf16. "
-        "This test reconstructs model from meta device without preserving _attn_implementation."
-    )
-    def test_all_tensors_are_parameter_or_buffer(self):
-        pass
-
-    def flash_attn_can_dispatch_composite_models(self, attn_implementation: str):
-        """
-        Tests if composite models can dispatch on flash attention if the sub-models support it.
-        The tests is needed as we handle differently composite models and we cannot check them
-        with above tests. If any of the sub-models does not support flash attention, we'll raise an error when dispatching
-        that particular sub-model. Otherwise we dispatch safely in all sub-models, where "sub-models" are specific
-        backbone models (LM/vision/audio/etc)
-        """
-        if not self.has_attentions:
-            self.skipTest(reason="Model architecture does not support attentions")
-
-        if not is_torch_bf16_available_on_device(torch_device):
-            self.skipTest(f"bfloat16 not supported on {torch_device} (on the specific device currently used)")
-
-        if not is_flash_attn_2_available():
-            self.skipTest("flash attention 2 is not available")
-
-        dtype = torch.bfloat16
-        for model_class in self.all_model_classes:
-            config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
-            model = model_class(config)
-            if not self._is_composite:
-                self.skipTest("This model is not a composite model!")
-
-            with tempfile.TemporaryDirectory() as tmpdirname:
-                model.save_pretrained(tmpdirname)
-                model = model_class.from_pretrained(tmpdirname, dtype=dtype)
-
-                sub_models_supporting_fa = [
-                    module._supports_flash_attn
-                    for name, module in model.named_modules()
-                    if isinstance(module, PreTrainedModel) and name != ""
-                ]
-                supports_fa_all_modules = (
-                    all(sub_models_supporting_fa) if len(sub_models_supporting_fa) > 0 else model._supports_flash_attn
-                )
-                if not supports_fa_all_modules:
-                    with self.assertRaises(ValueError):
-                        model_fa = model_class.from_pretrained(
-                            tmpdirname,
-                            dtype=dtype,
-                            attn_implementation=attn_implementation,
-                        )
-                else:
-                    model_fa = model_class.from_pretrained(
-                        tmpdirname, dtype=dtype, attn_implementation=attn_implementation
-                    )
-                    for key in model_fa.config:
-                        if isinstance(getattr(model_fa.config, key), PreTrainedConfig):
-                            sub_config = getattr(model_fa.config, key)
-                            self.assertTrue(sub_config._attn_implementation == attn_implementation)
-
-                    has_fa = False
-                    for name, submodule in model_fa.named_modules():
-                        class_name = submodule.__class__.__name__
-                        if (
-                            "Attention" in class_name
-                            and getattr(submodule, "config", None)
-                            and submodule.config._attn_implementation == attn_implementation
-                        ):
-                            has_fa = True
-                            break
-                    if not has_fa:
-                        raise ValueError(f"The {attn_implementation} model should have {attn_implementation} layers")
-
 
 @require_torch
 class ModernVBertForMaskedLMIntegrationTest(unittest.TestCase):
-    model_name: ClassVar[str] = "ModernVBERT/modernvbert"
+    model_name: ClassVar[str] = (
+        "/home/paul/mvbert/debug/mvb_models/mvb"  # TODO: replace with actual model name on HF when available
+    )
 
     def setUp(self):
+        self.torch_dtype = torch.float32
         self.processor = AutoProcessor.from_pretrained(self.model_name)
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.image = Image.open(
-            hf_hub_download("HuggingFaceTB/SmolVLM", "example_images/rococo.jpg", repo_type="space")
+        self.model = (
+            ModernVBertForMaskedLM.from_pretrained(self.model_name, torch_dtype=self.torch_dtype)
+            .to(torch_device)
+            .eval()
         )
-        self.text = "This [MASK] is on the wall."
 
-    @slow
-    @unittest.skip(reason="Model not available on HF for the moment.")
+    def tearDown(self):
+        cleanup(torch_device, gc_collect=True)
+
+    # @slow
+    # @unittest.skip(reason="Model not available on HF for the moment.")    # TODO: replace with actual model name on HF when available
     def test_masked_lm_inference(self):
-        model = ModernVBertForMaskedLM.from_pretrained(
-            self.model_name, torch_dtype=torch.float32, device_map=torch_device
-        )
+        image = Image.open(hf_hub_download("HuggingFaceTB/SmolVLM", "example_images/rococo.jpg", repo_type="space"))
+        text = "This [MASK] is on the wall."
 
         messages = [
             {
                 "role": "user",
                 "content": [
                     {"type": "image"},
-                    {"type": "text", "text": self.text},
+                    {"type": "text", "text": text},
                 ],
             },
         ]
 
         prompt = self.processor.apply_chat_template(messages, add_generation_prompt=False)
-        inputs = self.processor(text=prompt, images=[self.image], return_tensors="pt").to(torch_device)
+        inputs = self.processor(text=prompt, images=[image], return_tensors="pt").to(torch_device)
 
         with torch.no_grad():
-            outputs = model(**inputs)
+            outputs = self.model(**inputs)
 
         masked_index = inputs["input_ids"][0].tolist().index(self.tokenizer.mask_token_id)
         masked_token_logits = outputs.logits[0, masked_index, :]

@@ -1,4 +1,4 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,9 +13,6 @@
 # limitations under the License.
 """Testing suite for the PyTorch ColModernVBert model."""
 
-import gc
-import os
-import tempfile
 import unittest
 from typing import ClassVar
 
@@ -34,13 +31,11 @@ from transformers.models.colmodernvbert.modeling_colmodernvbert import (
 )
 from transformers.models.colmodernvbert.processing_colmodernvbert import ColModernVBertProcessor
 from transformers.testing_utils import (
-    backend_empty_cache,
+    cleanup,
     require_torch,
     require_vision,
-    slow,
     torch_device,
 )
-from transformers.utils import CONFIG_NAME
 
 
 if is_torch_available():
@@ -54,39 +49,44 @@ class ColModernVBertForRetrievalModelTester:
         batch_size=2,
         num_images=2,
         ignore_index=-100,
-        text_config={
-            "vocab_size": 99,
-            "pad_token_id": 0,
-            "hidden_size": 32,
-            "num_hidden_layers": 2,
-            "num_attention_heads": 4,
-            "intermediate_size": 64,
-            "hidden_activation": "gelu",
-            "mlp_dropout": 0.1,
-            "attention_dropout": 0.1,
-            "embedding_dropout": 0.1,
-            "classifier_dropout": 0.1,
-            "max_position_embeddings": 512,
-            "type_vocab_size": 2,
-            "is_decoder": False,
-            "initializer_range": 0.02,
-            "reference_compile": False,
-        },
+        text_config=None,
         is_training=False,
-        vision_config={
-            "image_size": 16,
-            "patch_size": 4,
-            "hidden_size": 64,
-            "num_hidden_layers": 2,
-            "num_attention_heads": 4,
-            "intermediate_size": 32,
-            "dropout": 0.1,
-            "attention_dropout": 0.1,
-            "initializer_range": 0.02,
-        },
+        vision_config=None,
         pixel_shuffle_factor=2,
         embedding_dim=64,
     ):
+        if text_config is None:
+            text_config = {
+                "vocab_size": 99,
+                "pad_token_id": 0,
+                "hidden_size": 32,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 4,
+                "intermediate_size": 64,
+                "hidden_activation": "gelu",
+                "mlp_dropout": 0.1,
+                "attention_dropout": 0.1,
+                "embedding_dropout": 0.1,
+                "classifier_dropout": 0.1,
+                "max_position_embeddings": 512,
+                "type_vocab_size": 2,
+                "is_decoder": False,
+                "initializer_range": 0.02,
+                "reference_compile": False,
+            }
+        if vision_config is None:
+            vision_config = {
+                "image_size": 16,
+                "patch_size": 4,
+                "hidden_size": 64,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 4,
+                "intermediate_size": 32,
+                "dropout": 0.1,
+                "attention_dropout": 0.1,
+                "initializer_range": 0.02,
+                "vision_use_head": False,
+            }
         self.is_training = is_training
         self.parent = parent
         self.batch_size = batch_size
@@ -121,9 +121,6 @@ class ColModernVBertForRetrievalModelTester:
             vlm_config=self.vlm_config,
             embedding_dim=self.embedding_dim,
         )
-        # ModernBERT defaults to FlashAttention which only supports fp16/bf16.
-        # Force SDPA on the text backbone for fp32 test compatibility.
-        config.vlm_config.text_config._attn_implementation = "sdpa"
         return config
 
     def prepare_config_and_inputs(self):
@@ -157,13 +154,14 @@ class ColModernVBertForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
     """
 
     all_model_classes = (ColModernVBertForRetrieval,) if is_torch_available() else ()
+
     test_resize_embeddings = True
+    model_split_percents = [0.5, 0.8, 0.9]
 
     def setUp(self):
         self.model_tester = ColModernVBertForRetrievalModelTester(self)
         self.config_tester = ConfigTester(self, config_class=ColModernVBertConfig, has_text_modality=False)
 
-    # @slow
     @require_vision
     def test_colmodernvbert_forward_inputs(self):
         config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
@@ -180,106 +178,38 @@ class ColModernVBertForRetrievalModelTest(ModelTesterMixin, unittest.TestCase):
 
             self.assertIsInstance(outputs, ColModernVBertForRetrievalOutput)
 
-    @unittest.skip(reason="Seems to fail due to device issues.")
-    def test_cpu_offload(self):
-        pass
-
-    @unittest.skip(reason="Seems to fail due to device issues.")
-    def test_disk_offload_bin(self):
-        pass
-
-    @unittest.skip(reason="Seems to fail due to device issues.")
-    def test_disk_offload_safetensors(self):
-        pass
-
-    @unittest.skip(
-        reason="ModernBERT text backbone defaults to FlashAttention which only supports fp16/bf16. "
-        "This test uses from_pretrained which loses _attn_implementation after serialization."
-    )
-    def test_model_parallelism(self):
-        pass
-
-    @unittest.skip(reason="The test seems not to be compatible, tries to load the base model through the retrieval.")
-    def test_correct_missing_keys(self):
-        pass
-
     @unittest.skip(reason="Error related to ModernBERT model parallelism: self.dtype is broken.")
     def test_multi_gpu_data_parallel_forward(self):
         pass
 
-    @unittest.skip(
-        reason="ModernBERT text backbone defaults to FlashAttention which only supports fp16/bf16. "
-        "This test reconstructs config from to_diff_dict() which loses _attn_implementation."
-    )
-    def test_model_forward_default_config_values(self):
-        pass
-
-    @unittest.skip(
-        reason="ModernBERT text backbone defaults to FlashAttention which only supports fp16/bf16. "
-        "This test reconstructs model from meta device without preserving _attn_implementation."
-    )
-    def test_all_tensors_are_parameter_or_buffer(self):
-        pass
-
-    def test_save_load(self):
-        for model_class in self.all_model_classes:
-            config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
-            model = model_class(config)
-            model.to(torch_device)
-            model.eval()
-            with torch.no_grad():
-                first = model(**self._prepare_for_class(inputs_dict, model_class))[0]
-
-            with tempfile.TemporaryDirectory() as tmpdirname:
-                model.save_pretrained(tmpdirname)
-                self.assertTrue(os.path.exists(os.path.join(tmpdirname, CONFIG_NAME)))
-
-                # Force SDPA on text backbone for FA dtype compatibility
-                model = model_class.from_pretrained(
-                    tmpdirname, attn_implementation={"vlm_config": {"text_config": "sdpa"}}
-                )
-                model.to(torch_device)
-                model.eval()
-                with torch.no_grad():
-                    second = model(**self._prepare_for_class(inputs_dict, model_class))[0]
-
-                model.save_pretrained(tmpdirname)
-                model = model_class.from_pretrained(
-                    tmpdirname, attn_implementation={"vlm_config": {"text_config": "sdpa"}}
-                )
-
-            if isinstance(first, tuple) and isinstance(second, tuple):
-                for tensor1, tensor2 in zip(first, second):
-                    torch.testing.assert_close(
-                        tensor1, tensor2, msg="Running save/load and forward yields different results"
-                    )
-            else:
-                torch.testing.assert_close(first, second, msg="Running save/load and forward yields different results")
-
 
 @require_torch
 class ColModernVBertModelIntegrationTest(unittest.TestCase):
-    model_name: ClassVar[str] = "ModernVBERT/colmodernvbert-hf"
+    model_name: ClassVar[str] = (
+        "/home/paul/mvbert/debug/mvb_models/colmvb__hf"  # TODO: replace with actual model name on HF when available
+    )
 
     def setUp(self):
+        self.model_dtype = torch.float32
         self.processor = ColModernVBertProcessor.from_pretrained(self.model_name)
+        self.model = (
+            ColModernVBertForRetrieval.from_pretrained(
+                self.model_name,
+                dtype=self.model_dtype,
+            )
+            .to(torch_device)
+            .eval()
+        )
 
     def tearDown(self):
-        gc.collect()
-        backend_empty_cache(torch_device)
+        cleanup(torch_device, gc_collect=True)
 
-    @slow
-    @unittest.skip(reason="Model not available on HF for the moment.")
+    # @slow
+    # @unittest.skip(reason="Model not available on HF for the moment.")  # TODO: replace with actual model name on HF when available
     def test_model_integration_test(self):
         """
         Test if the model is able to retrieve the correct pages for a small and easy dataset.
         """
-        model = ColModernVBertForRetrieval.from_pretrained(
-            self.model_name,
-            dtype=torch.bfloat16,
-            device_map=torch_device,
-        ).eval()
-
         # Load the test dataset
         queries = [
             "A paint on the wall",
@@ -292,13 +222,13 @@ class ColModernVBertModelIntegrationTest(unittest.TestCase):
         ]
 
         # Preprocess the examples
-        batch_images = self.processor(images=images).to(torch_device)
-        batch_queries = self.processor(text=queries).to(torch_device)
+        batch_queries = self.processor.process_queries(text=queries).to(torch_device)
+        batch_images = self.processor.process_images(images=images).to(torch_device)
 
         # Run inference
         with torch.inference_mode():
-            image_embeddings = model(**batch_images).embeddings
-            query_embeddings = model(**batch_queries).embeddings
+            image_embeddings = self.model(**batch_images).embeddings
+            query_embeddings = self.model(**batch_queries).embeddings
 
         # Compute retrieval scores
         scores = self.processor.score_retrieval(
@@ -308,9 +238,10 @@ class ColModernVBertModelIntegrationTest(unittest.TestCase):
 
         scores = torch.softmax(scores, dim=-1)
 
-        assert scores.ndim == 2, f"Expected 2D tensor, got {scores.ndim}"
-        assert scores.shape == (len(images), len(images)), (
-            f"Expected shape {(len(images), len(images))}, got {scores.shape}"
+        self.assertTrue(scores.ndim == 2, f"Expected 2D tensor, got {scores.ndim}")
+        (
+            self.assertTrue(scores.shape == (len(images), len(images))),
+            (f"Expected shape {(len(images), len(images))}, got {scores.shape}"),
         )
 
         # Check if the maximum scores per row are in the diagonal of the matrix score
@@ -322,4 +253,7 @@ class ColModernVBertModelIntegrationTest(unittest.TestCase):
             dtype=scores.dtype,
         )
 
-        assert torch.allclose(scores, expected_scores, atol=1e-2), f"Expected scores {expected_scores}, got {scores}"
+        (
+            self.assertTrue(torch.allclose(scores, expected_scores, atol=1e-2)),
+            f"Expected scores {expected_scores}, got {scores}",
+        )

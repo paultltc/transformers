@@ -46,7 +46,7 @@ class ModernVBertConfig(PretrainedConfig):
 
     Example:
     ```python
-    >>> from modernvbert import ModernVBertConfig
+    >>> from transformers import ModernVBertConfig
 
     >>> # Initializing configuration
     >>> configuration = ModernVBertConfig()
@@ -54,7 +54,7 @@ class ModernVBertConfig(PretrainedConfig):
     >>> # Initializing a model from the configuration (model class is implemented in
     >>> # `modernvbert.modeling_modernvbert`)
 
-    >>> from modernvbert import ModernVBertModel
+    >>> from transformers import ModernVBertModel
     >>> model = ModernVBertModel(configuration)
 
     >>> # Accessing the model configuration
